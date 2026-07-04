@@ -1,0 +1,12 @@
+# avr-gcc / make build products
+*.o
+*.d
+*.elf
+*.hex
+*.map
+*.lst
+build_budget/
+
+# PlatformIO
+.pio/
+.vscode/
