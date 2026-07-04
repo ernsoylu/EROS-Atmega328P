@@ -137,6 +137,24 @@ start == now equality edge.
 
 ## Build & flash
 
+The `eros.sh` helper wraps the whole toolchain — check, install, build,
+flash:
+
+```sh
+./eros.sh              # check the AVR toolchain is installed
+./eros.sh -install     # install anything missing (apt/dnf/pacman/brew/…)
+./eros.sh -build       # build both firmwares into ./build (gitignored)
+./eros.sh -flash       # auto-detect the board + baud, flash reference demo
+./eros.sh -flash demo  # flash the comprehensive demo instead
+```
+
+`-flash` finds the serial port (`/dev/ttyUSB*`, `/dev/ttyACM*`,
+`/dev/cu.usb*`) and the bootloader baud (57600 old-bootloader Nano,
+then 115200 Optiboot) by probing the ATmega328P signature; override
+either with `EROS_PORT=` / `EROS_BAUD=`.
+
+Or drive the Makefiles directly:
+
 ```sh
 make                 # build + size + budget check (fails if over budget)
 make flash           # avrdude, old-bootloader Nano (57600 baud)

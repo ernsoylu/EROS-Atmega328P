@@ -7,6 +7,9 @@
 *.lst
 build_budget/
 
+# eros.sh -build output
+/build/
+
 # PlatformIO
 .pio/
 .vscode/
