@@ -1,0 +1,23 @@
+[project]
+name = "erosgen"
+version = "0.1.0"
+description = "EROS RTOS system configurator and code generator (the OIL-file compiler)."
+requires-python = ">=3.9"
+# Core stays PyYAML-only so a plain checkout can generate/validate/build.
+dependencies = ["pyyaml>=6"]
+
+[project.optional-dependencies]
+# Phase 1: read scaling/dimension metadata from Embedded Coder's codeInfo.mat
+# (MAT v5 -> scipy.io.loadmat; guard for v7.3/HDF5 which needs h5py).
+mat = ["scipy>=1.10"]
+# Phase 3: GUI + comment-preserving YAML round-trip.
+gui = ["PySide6>=6.6", "ruamel.yaml>=0.18"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+# erosgen is run in place from tools/; uv only manages the dev environment and
+# deps, it does not build/install erosgen as a package. Keep uv OUT of generated
+# artifacts (the emitted Makefile's `config:` target stays plain `python3`).
+package = false

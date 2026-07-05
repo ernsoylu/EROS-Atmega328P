@@ -22,6 +22,12 @@ tests/build/
 __pycache__/
 *.pyc
 
+# uv environment (uv.lock and pyproject.toml ARE committed; the venv is not)
+.venv/
+
+# CodeGraph local semantic index (machine-specific, regenerable)
+.codegraph/
+
 # Simulink / Embedded Coder caches & build intermediates (regenerable).
 # Generated *code* is kept under codegen/<model>_ert_rtw/; these are not.
 cache/

@@ -1,0 +1,25 @@
+/**
+ * @file    asw_10ms.c
+ * @brief   10 ms rate - TASK_CTRL.
+ *
+ * Generated once by tools/erosgen.py - edit freely; it will not
+ * be overwritten. Keep rate-local state static in this file;
+ * cross-rate signals belong in an asw_signals module.
+ */
+
+#include "eros.h"
+#include "appKnbSwt.h"
+
+/* Runnables you implement (here or in another TU). Move
+ * these prototypes to a shared header if reused. */
+extern void Asw_Ctrl(void);
+
+/** TASK_CTRL - 10 ms, WCET <= 2 tick(s). */
+void Task_Ctrl(void)
+{
+    /* sample: hardware -> model inports here */
+    appKnbSwt_Runnable();
+    /* actuate: model outports -> hardware here */
+    Asw_Ctrl();
+    TerminateTask();
+}

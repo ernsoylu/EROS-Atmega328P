@@ -34,6 +34,10 @@ DEMOS = [
     (REPO / "reference-demo" / "app.yaml", REPO / "reference-demo"),
 ]
 
+# Golden fixture for the emitters reference-demo doesn't exercise (it ships a
+# hand-written main.c, so it has no os_gen.h). See fixtures/genmain/regen.py.
+GENMAIN = HERE / "fixtures" / "genmain"
+
 
 def test_demos_config_h_golden():
     for yml, d in DEMOS:
@@ -49,6 +53,30 @@ def test_demos_config_c_golden():
         got = erosgen.emit_config_c(s)
         want = (d / "config.c").read_text()
         assert got == want, f"{d.name}/config.c drifted from app.yaml"
+
+
+def test_demos_makefile_golden():
+    for yml, d in DEMOS:
+        s = _system_from(yml)
+        got = erosgen.emit_makefile(s, d.resolve())
+        want = (d / "Makefile").read_text()
+        assert got == want, f"{d.name}/Makefile drifted from app.yaml"
+
+
+def test_genmain_skeleton_goldens():
+    """Pin the emitters reference-demo can't reach: os_gen.h, the generated
+    main.c, and an asw skeleton with a Simulink step. Regenerate the .golden
+    snapshots with fixtures/genmain/regen.py after an intentional change."""
+    s = _system_from(GENMAIN / "app.yaml")
+    ctrl = s.periodic[0]
+    cases = {
+        "os_gen.h.golden":   erosgen.emit_os_gen_h(s),
+        "main.c.golden":     erosgen.emit_main_skeleton(s),
+        "asw_10ms.c.golden": erosgen.emit_asw_skeleton(s, ctrl),
+    }
+    for name, got in cases.items():
+        want = (GENMAIN / name).read_text()
+        assert got == want, f"genmain/{name} drifted from the emitter"
 
 
 def test_priority_is_rate_monotonic():

@@ -1,0 +1,27 @@
+# Golden-master fixture for tools/test_erosgen.py. Exercises the emitters that
+# reference-demo does NOT: os_gen.h (gpio directions + driver init), the
+# generated main.c (Simulink initialize + OS_StartAlarms), and an asw skeleton
+# with both a model step_call and a runnable. The *.golden files beside this
+# YAML are committed snapshots — regenerate them, never hand-edit:
+#   uv run python tools/fixtures/genmain/regen.py
+system:
+  name: genmain
+  kernel_dir: ../../../kernel
+  drivers_dir: ../../../drivers
+  tick_hz: 1000
+  hooks: { startup: true, error: true, shutdown: true }
+peripherals:
+  adc: {}                       # DRIVER_INIT -> ADC_Init(); claims no pins
+gpio:
+  - { pin: D13, dir: out, name: LED, init: false }
+  - { pin: D2,  dir: in,  pullup: true, name: BUTTON }
+tasks:
+  - { name: init, autostart: true, wcet_ms: 2 }
+  - { name: ctrl, period_ms: 10, wcet_ms: 2, runnables: [Asw_Ctrl] }
+resources:
+  - { name: shared, users: [ctrl] }
+pool: { block_size: 8, blocks: 4 }
+simulink:
+  model: appKnbSwt
+  dir: ../../../codegen
+  rate_map: { Runnable: ctrl }   # appKnbSwt_Runnable() in TASK_CTRL
