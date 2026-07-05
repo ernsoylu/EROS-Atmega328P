@@ -95,16 +95,15 @@ $(BUILD)/%.elf: firmware/test_%.c common/testkit.c | $(BUILD)
 	$(AVR_CC) $(AVR_CFLAGS) $(AVR_LDFLAGS) -o $@ $^ $(DRV_$*)
 
 # $(call run_group,<test list>,<fatal:1|0>)
+# Uses make's $(foreach) (not a shell loop) so each test's per-test
+# $(FLAGS_<name>) resolves at make-time - a shell "for t" cannot index a
+# make variable by the loop value.
 define run_group
 	@fail=0; \
-	for t in $(1); do \
-	  printf '%-14s ' "$$t"; \
-	  if $(RUNNER) $(BUILD)/$$t.elf $(FLAGS_$$t) >/dev/null 2>$(BUILD)/$$t.log; then \
-	    echo PASS; \
-	  else \
-	    echo FAIL; sed 's/^/    /' $(BUILD)/$$t.log; fail=1; \
-	  fi; \
-	done; \
+	$(foreach t,$(1), printf '%-14s ' "$(t)"; \
+	  if $(RUNNER) $(BUILD)/$(t).elf $(FLAGS_$(t)) >/dev/null 2>$(BUILD)/$(t).log; \
+	  then echo PASS; \
+	  else echo FAIL; sed 's/^/    /' $(BUILD)/$(t).log; fail=1; fi; ) \
 	if [ $(2) -eq 1 ]; then exit $$fail; else exit 0; fi
 endef
 
