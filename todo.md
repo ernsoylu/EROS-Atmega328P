@@ -112,9 +112,16 @@ class Diagnostic:
 - [x] `mcu/atmega2560.yaml` — second same-family target (ports A..L, Mega `D13`→`PB7`, PORTE UART, `m2560`/`wiring`). `mega_gpio` fixture proves it: 2560 Makefile + `os_gen.h` driving `PORTL` (2560-only) and `PB7`; `PL7` rejected on 328P, accepted on 2560. 328P byte-identical (17/17, zero drift).
 - Confirmed the standing risk: **ESP32 is still a separate backend** — this proved *same-family* breadth on the AVR backend; ESP32 breaks the emitter idioms and needs a kernel port.
 
-### Phase 3 — PySide6 thin client (last)
-- [ ] Two-pane UI; live diagnostics from `validate.py`; build console streaming `make`; File/Edit/About menus
-- [ ] YAML persistence: prefer `ruamel.yaml` round-trip to keep `app.yaml` the single, comment-preserving source of truth (fallback: GUI owns a separate project file, regenerates `app.yaml` on "Generate Code")
+### Phase 3 — PySide6 thin client ✅
+- [x] `gui/` — `ProjectModel` bridge (pure, no Qt) + two-pane `MainWindow` (project tree | live diagnostics table | build console) + `File`/`Help` menus. Zero domain logic; every fact from the engine (`collect_diagnostics`, summaries) and generate = save + run the generator.
+- [x] YAML persistence via `ruamel.yaml` round-trip (comments + key order preserved; flow-map inner spacing may normalize — a ruamel default, not comment loss). `app.yaml` stays the single source of truth.
+- [x] Verified headless with Qt **offscreen**: 5 tests (ProjectModel + MainWindow smoke), plus a rendered screenshot. New CI `gui` job runs the offscreen tests.
+- Run: `uv run --extra gui python -m gui [app.yaml]`.
+
+---
+
+## Status: Phases 0–3 complete
+17 engine tests + 5 GUI tests; 328P byte-identical throughout; RTE end-to-end + `atmega2560` proven; thin GUI over the engine. **Unverified locally (CI-gated):** the `avr-gcc` compile of the generated `model_app` firmware, and the `gui` CI job's environment (Qt offscreen libs). Deferred follow-ups: `codeInfo.mat` scaling cross-check, pwm RTE adapter, multi-model RTE, GUI editing (currently read/generate).
 
 ## Parsing strategy (Phase 1) — verified against the real ERT output
 Files probed in `codegen/appKnbSwt_ert_rtw/`:
