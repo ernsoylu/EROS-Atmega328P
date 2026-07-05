@@ -21,3 +21,12 @@ tests/build/
 # Python bytecode (tools/)
 __pycache__/
 *.pyc
+
+# Simulink / Embedded Coder caches & build intermediates (regenerable).
+# Generated *code* is kept under codegen/<model>_ert_rtw/; these are not.
+cache/
+slprj/
+tmwinternal/
+*.slxc
+*.slx.autosave
+*.slx.original

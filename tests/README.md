@@ -52,6 +52,14 @@ EROS-TEST: FAIL <tag>
 | `extint`      | drivers/extint.c    | stimulus  | INT0 falling-edge count + clear-on-read |
 | `icp`         | drivers/icp.c       | stimulus  | Timer1 capture period/pulse from a pulse train |
 | `acomp`       | drivers/acomp.c     | stimulus  | comparator register/smoke (no analog model) |
+| `model_knbswt`| ASW→RTE→BSW (Simulink `appKnbSwt`) | stimulus | knob on A0 swept 1023→0→1023 over 10 s drives the model; DO pin switches once each way at the ~25 % threshold |
+
+The `model_knbswt` test exercises the full **ASW → RTE → BSW** chain (see
+`rte/README.md`): the generated Simulink model, the hand-written RTE that
+binds its ports to the ADC and a digital output, and the drivers. The
+host ramps ADC A0 (`--adc-sweep 0:5000:0:5000`) and watches the DO pin
+(`--watch-pin B,5`); the firmware self-checks that the LED switches
+exactly once on the way down and once on the way up, near raw count 256.
 
 **Pure-firmware** tests are fully deterministic and gate CI
 (`make test-pure`). **Stimulus** tests depend on simavr's modelling of

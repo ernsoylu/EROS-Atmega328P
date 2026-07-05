@@ -25,12 +25,16 @@ F_CPU       := 16000000UL
 ROOT        := ..
 DRIVERS     := $(ROOT)/drivers
 CDEMO       := $(ROOT)/comprehensive-demo
+CODEGEN     := $(ROOT)/codegen
+MODEL_RTW   := $(CODEGEN)/appKnbSwt_ert_rtw
+RTE         := $(ROOT)/rte
 BUILD       := build
 
 AVR_CFLAGS  := -Wall -Wextra -std=gnu99 -Os -g \
                -mmcu=$(MCU) -DF_CPU=$(F_CPU) \
                -ffunction-sections -fdata-sections \
-               -I common -I $(DRIVERS) -I $(CDEMO)
+               -I common -I $(DRIVERS) -I $(CDEMO) \
+               -I $(RTE) -I $(MODEL_RTW)
 AVR_LDFLAGS := -Wl,--gc-sections
 
 SIMAVR_INC  ?= /usr/include/simavr
@@ -53,6 +57,13 @@ DRV_extint      := $(DRIVERS)/extint.c
 DRV_icp         := $(DRIVERS)/icp.c
 DRV_acomp       := $(DRIVERS)/acomp.c
 
+# Simulink model 'appKnbSwt' end-to-end: ASW (generated) + RTE + BSW (adc).
+DRV_model_knbswt := $(RTE)/Rte.c \
+                    $(MODEL_RTW)/appKnbSwt.c \
+                    $(MODEL_RTW)/appKnbSwt_Intfc.c \
+                    $(MODEL_RTW)/appKnbSwt_Param.c \
+                    $(DRIVERS)/adc.c
+
 # ADC: A0 -> 2500 mV, A1 -> 1100 mV, A2 -> 0 mV (assertions use ordering)
 FLAGS_adc       := --adc 0:2500 --adc 1:1100 --adc 2:0
 FLAGS_spi       := --spi-echo
@@ -60,9 +71,11 @@ FLAGS_spi       := --spi-echo
 FLAGS_extint    := --pin D,2,500,1 --pin D,2,1000,0 --pin D,2,2000,1 --pin D,2,3000,0
 # ICP1 = PB0: two rising edges 400us apart -> period ~100 ticks (4us/tick)
 FLAGS_icp       := --pin B,0,500,0 --pin B,0,1000,1 --pin B,0,1400,0 --pin B,0,1900,1
+# Knob on A0: 1023->0 over 5 s then 0->1023 over 5 s; watch DO on PB5.
+FLAGS_model_knbswt := --adc-sweep 0:5000:0:5000 --watch-pin B,5 --timeout-ms 13000
 
 PURE_TESTS      := uart eeprom timer0_pwm i2c
-STIM_TESTS      := adc spi extint icp acomp
+STIM_TESTS      := adc spi extint icp acomp model_knbswt
 TESTS           := $(PURE_TESTS) $(STIM_TESTS)
 
 ELVES := $(addprefix $(BUILD)/,$(addsuffix .elf,$(TESTS)))

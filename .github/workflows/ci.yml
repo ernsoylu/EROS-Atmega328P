@@ -41,6 +41,18 @@ jobs:
       - name: Driver compile gate (-Werror, all peripherals)
         run: make -C drivers
 
+      - name: ASW + RTE compile gate (-Werror, generated model untouched)
+        run: |
+          avr-gcc -Wall -Wextra -Werror -std=c99 -Os -flto \
+            -ffunction-sections -fdata-sections -fno-common \
+            -mmcu=atmega328p -DF_CPU=16000000UL \
+            -Idrivers -Irte -Icodegen/appKnbSwt_ert_rtw \
+            -c rte/Rte.c \
+               codegen/appKnbSwt_ert_rtw/appKnbSwt.c \
+               codegen/appKnbSwt_ert_rtw/appKnbSwt_Intfc.c \
+               codegen/appKnbSwt_ert_rtw/appKnbSwt_Param.c
+          rm -f *.o
+
   # -------------------------------------------------------------------
   # Stage 2 - execute peripheral drivers in simavr and assert behaviour.
   # -------------------------------------------------------------------
@@ -63,6 +75,12 @@ jobs:
 
       - name: Stimulus peripheral tests (non-gating until hardened)
         run: make -C tests test-stim
+
+      - name: Simulink model ASW->RTE->BSW sweep (observable, non-gating)
+        continue-on-error: true
+        # Knob on A0 swept 1023->0->1023 over 10 s; the DO pin trace and
+        # the on-chip threshold self-check are printed to the log.
+        run: make -C tests test-model_knbswt
 
   # -------------------------------------------------------------------
   # Stage 3 - independent boot/run smoke on qemu-system-avr.

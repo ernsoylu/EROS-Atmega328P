@@ -18,8 +18,12 @@
  * Usage:
  *   runtest <fw.elf> [--timeout-ms N] [--freq HZ] [--mcu NAME] [--echo]
  *           [--adc CH:MV]...        static ADC channel voltage (mV)
+ *           [--adc-sweep CH:HI:LO:HALF_MS]
+ *                                   triangle ramp: HI->LO over HALF_MS,
+ *                                   then LO->HI over HALF_MS, then hold HI
  *           [--spi-echo]            SPI slave returns the byte just sent
  *           [--pin P,BIT,US,LVL]... drive PORTx pin BIT to LVL at +US us
+ *           [--watch-pin P,BIT]     log transitions of output pin P,BIT
  */
 
 #include <sim_avr.h>
@@ -112,6 +116,49 @@ struct adc_val { uint8_t ch; uint32_t mv; };
 static struct adc_val g_adc[MAX_STIM];
 static int            g_nadc = 0;
 
+/* --- ADC triangle sweep (ramp down then up) ------------------------ */
+/* Models a knob swept HI -> LO over half_ms, then LO -> HI over the next
+ * half_ms, then held at HI. Re-fires every 1 ms of simulated time. */
+
+struct adc_sweep { uint8_t ch; long hi_mv, lo_mv, half_ms; int active; };
+static struct adc_sweep g_sweep = { 0, 0, 0, 0, 0 };
+
+static avr_cycle_count_t adc_sweep_cb(struct avr_t *avr,
+                                      avr_cycle_count_t when, void *param)
+{
+    (void)param;
+    long per_ms = (long)(avr->frequency / 1000u);
+    long ms     = (long)(when / (avr_cycle_count_t)per_ms);
+    long h      = g_sweep.half_ms;
+    long mv;
+
+    if (ms <= h)
+        mv = g_sweep.hi_mv + (g_sweep.lo_mv - g_sweep.hi_mv) * ms / h;
+    else if (ms <= 2 * h)
+        mv = g_sweep.lo_mv + (g_sweep.hi_mv - g_sweep.lo_mv) * (ms - h) / h;
+    else
+        mv = g_sweep.hi_mv;
+
+    if (mv < 0) mv = 0;
+    avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_ADC_GETIRQ,
+                                ADC_IRQ_ADC0 + g_sweep.ch), (uint32_t)mv);
+    return when + (avr_cycle_count_t)per_ms;   /* again in 1 ms */
+}
+
+/* --- Watch an output pin and log its transitions ------------------- */
+
+struct pin_watch { char port; uint8_t bit; int active; };
+static struct pin_watch g_watch = { 0, 0, 0 };
+
+static void watch_pin_cb(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+    (void)irq; (void)param;
+    long per_ms = (long)(g_avr->frequency / 1000u);
+    long ms     = (long)(g_avr->cycle / (avr_cycle_count_t)per_ms);
+    printf("  DO %c%u = %u  @ %ld ms\n",
+           g_watch.port, g_watch.bit, value & 1u, ms);
+}
+
 int main(int argc, char **argv)
 {
     const char *fname   = NULL;
@@ -149,6 +196,25 @@ int main(int argc, char **argv)
                 g_pins[g_npins].at_us = us;
                 g_pins[g_npins].level = (uint8_t)lvl;
                 g_npins++;
+            }
+        }
+        else if (!strcmp(argv[i], "--adc-sweep") && i + 1 < argc)
+        {
+            unsigned ch; long hi, lo, half;
+            if (sscanf(argv[++i], "%u:%ld:%ld:%ld", &ch, &hi, &lo, &half) == 4)
+            {
+                g_sweep.ch = (uint8_t)ch; g_sweep.hi_mv = hi;
+                g_sweep.lo_mv = lo; g_sweep.half_ms = half > 0 ? half : 1;
+                g_sweep.active = 1;
+            }
+        }
+        else if (!strcmp(argv[i], "--watch-pin") && i + 1 < argc)
+        {
+            char port; unsigned bit;
+            if (sscanf(argv[++i], "%c,%u", &port, &bit) == 2)
+            {
+                g_watch.port = port; g_watch.bit = (uint8_t)bit;
+                g_watch.active = 1;
             }
         }
     }
@@ -196,6 +262,20 @@ int main(int argc, char **argv)
     for (int i = 0; i < g_npins; i++)
         avr_cycle_timer_register_usec(avr, g_pins[i].at_us,
                                       pin_edge_cb, &g_pins[i]);
+
+    if (g_sweep.active)
+    {
+        /* Seed the starting voltage, then update every 1 ms. */
+        avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_ADC_GETIRQ,
+                                    ADC_IRQ_ADC0 + g_sweep.ch),
+                      (uint32_t)g_sweep.hi_mv);
+        avr_cycle_timer_register(avr, freq / 1000, adc_sweep_cb, NULL);
+    }
+
+    if (g_watch.active)
+        avr_irq_register_notify(
+            avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ(g_watch.port),
+                          g_watch.bit), watch_pin_cb, NULL);
 
     uint64_t budget = (uint64_t)timeout * (freq / 1000);
     int      state  = cpu_Running;
