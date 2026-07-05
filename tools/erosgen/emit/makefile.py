@@ -40,12 +40,26 @@ def periph_defines(s):
     return defs
 
 
+def model_driver_srcs(m):
+    """Source files for the drivers a model's ports bind to (adc.c, ...);
+    dio binds to raw registers and needs no source."""
+    out = []
+    ports = m.get("ports", {}) or {}
+    for direction in ("in", "out"):
+        for pd in ports.get(direction, []) or []:
+            fname = KNOWN_PERIPHERALS.get(pd.get("driver"))
+            if fname and fname not in out:
+                out.append(fname)
+    return out
+
+
 def emit_makefile(s, app_dir):
     local_drv, ext_drv = driver_sources(s, app_dir)
     # Auto-include the generated per-rate ASW files so a fresh project
     # builds without hand-editing sources; dedup against any the user
     # listed explicitly (the reference demo lists them for readability).
-    asw_files = [f"asw_{t.period_ms}ms.c" for t in s.periodic]
+    asw_files = [f"asw_{t.period_ms}ms.c" for t in s.periodic
+                 if t.name not in s.model_task_names]
     app_srcs = list(s.sources)
     for f in asw_files + local_drv:
         if f not in app_srcs:
@@ -68,6 +82,27 @@ def emit_makefile(s, app_dir):
         ]
         vpath.append(f"{mdir} $(MODEL_DIR)")
         incs.append(f"-I{mdir} -I$(MODEL_DIR)")
+
+    # RTE-generated model (models: section). The RTE (Rte.c) is generated into
+    # the app dir; the model ERT sources and any port-bound drivers are added.
+    if s.models:
+        m = s.models[0]
+        model_block = [
+            f"MODEL_DIR  := {m['codegen_dir']}",
+            "MODEL_SRCS := $(filter-out ert_main.c,"
+            "$(notdir $(wildcard $(MODEL_DIR)/*.c)))",
+        ]
+        vpath.append("$(MODEL_DIR)")
+        incs.append("-I$(MODEL_DIR)")
+        if "Rte.c" not in app_srcs:
+            app_srcs.append("Rte.c")
+        for fname in model_driver_srcs(m):
+            if fname not in ext_drv:
+                ext_drv.append(fname)
+        if ext_drv and s.drivers_dir not in vpath:
+            vpath.append(s.drivers_dir)
+        if ext_drv and f"-I{s.drivers_dir}" not in incs:
+            incs.append(f"-I{s.drivers_dir}")
 
     defs = periph_defines(s)
 
@@ -95,7 +130,7 @@ def emit_makefile(s, app_dir):
     L.append("")
     L.append(f"APP_SRCS := {' '.join(app_srcs)}")
     srcs = "$(APP_SRCS) " + " ".join(ext_drv + ["eros.c", "config.c"])
-    if s.simulink:
+    if s.simulink or s.models:
         srcs += " $(MODEL_SRCS)"
     L.append(f"SRCS     := {srcs}")
     L.append("OBJS     := $(SRCS:.c=.o)")

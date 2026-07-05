@@ -31,6 +31,8 @@ def emit_os_gen_h(s):
     L.append(INCLUDE_EROS_H)
     for p in sorted(s.peripherals):
         L.append(f'#include "{DRIVER_HEADER[p]}"')
+    if s.models:
+        L.append('#include "Rte.h"')
     L.append("")
     L.append("/** Pin directions/pull-ups + enabled-driver init. Call from")
     L.append(" *  StartupHook() (interrupts still disabled). */")
@@ -56,7 +58,10 @@ def emit_os_gen_h(s):
     for p in sorted(s.peripherals):
         if p in DRIVER_INIT:
             L.append(f"    {DRIVER_INIT[p]}")
-    if not s.gpio and not any(p in DRIVER_INIT for p in s.peripherals):
+    if s.models:
+        L.append("    Rte_Init();  /* BSW init for bound ports + ASW init */")
+    if (not s.gpio and not s.models
+            and not any(p in DRIVER_INIT for p in s.peripherals)):
         L.append("    /* no gpio or auto-init drivers configured */")
     L.append("}")
     L.append("")

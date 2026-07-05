@@ -50,6 +50,15 @@ jobs:
                codegen/appKnbSwt_ert_rtw/appKnbSwt_Param.c
           rm -f *.o
 
+      - name: RTE generation end-to-end (generate a models: app, no drift, build)
+        run: |
+          # erosgen turns the models: block into Rte.h/Rte_Cfg.h/Rte.c + the
+          # config.c TASK_/ALARM_ wiring; regeneration must match the committed
+          # golden, and the generated firmware must build -Werror.
+          python3 tools/erosgen.py tools/fixtures/model_app/app.yaml
+          git diff --exit-code tools/fixtures/model_app/
+          make -C tools/fixtures/model_app all
+
   # -------------------------------------------------------------------
   # Stage 2 - execute peripheral drivers in simavr and assert behaviour.
   # -------------------------------------------------------------------

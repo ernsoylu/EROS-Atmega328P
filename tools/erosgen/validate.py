@@ -28,7 +28,8 @@ ALLOWED_KEYS = {
     "simulink":   {"model", "dir", "rate_map"},
     "uart":       {"baud", "tx_ring", "rx_ring"},
     # RTE generation from a Simulink SWC (see rte/README.md, models: schema).
-    "model":      {"name", "codegen_dir", "init", "runnable", "rate_ms", "ports"},
+    "model":      {"name", "codegen_dir", "init", "runnable", "rate_ms",
+                   "wcet_ms", "ports"},
     "ports":      {"in", "out"},
     "port":       {"signal", "driver", "channel", "port", "bit"},
 }

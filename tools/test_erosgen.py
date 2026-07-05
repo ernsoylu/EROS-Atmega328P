@@ -268,6 +268,38 @@ def test_model_rte_goldens():
     assert emit_rte_c(rm, "app.yaml") == (d / "Rte.c.golden").read_text()
 
 
+def test_model_app_end_to_end_goldens():
+    """A full models: app generates config.*, Makefile, main.c, os_gen.h AND
+    Rte.h/Rte_Cfg.h/Rte.c, with the model wired as TASK_/ALARM_<model>. Pins the
+    whole end-to-end output; CI additionally compiles it (see ci.yml)."""
+    from erosgen import Diagnostics, System, resolve_models
+    from erosgen.emit import (emit_config_c, emit_config_h, emit_main_skeleton,
+                              emit_makefile, emit_os_gen_h, emit_rte_c,
+                              emit_rte_cfg_h, emit_rte_h)
+    d = HERE / "fixtures" / "model_app"
+    doc = yaml.safe_load((d / "app.yaml").read_text())
+    s = System(doc, d / "app.yaml")
+    got = {
+        "config.h": emit_config_h(s),
+        "config.c": emit_config_c(s),
+        "Makefile": emit_makefile(s, d.resolve()),
+        "os_gen.h": emit_os_gen_h(s),
+        "main.c":   emit_main_skeleton(s),
+    }
+    sink = Diagnostics(strict=False)
+    rms = resolve_models(doc, d, sink)
+    assert [x.message for x in sink.items if x.severity == "error"] == []
+    rm = rms[0]
+    got["Rte.h"] = emit_rte_h(rm, "app.yaml")
+    got["Rte_Cfg.h"] = emit_rte_cfg_h(rm, "app.yaml")
+    got["Rte.c"] = emit_rte_c(rm, "app.yaml", integrated=True)
+    for name, text in got.items():
+        assert text == (d / name).read_text(), f"model_app/{name} drifted"
+    # the model became a real OS task + alarm
+    assert "TASK_APPKNBSWT" in got["config.h"]
+    assert "ALARM_APPKNBSWT" in got["config.h"]
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

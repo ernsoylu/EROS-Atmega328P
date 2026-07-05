@@ -133,8 +133,23 @@ class System:
 
         self.warnings = []  # mirrors warning diagnostics for report()
 
-        # ---- tasks ----------------------------------------------------
-        tasks = [Task(t, sink) for t in doc.get("tasks", [])]
+        # ---- tasks (declared + one synthesized OS task per model) ------
+        # A models: entry becomes a periodic task whose body runs the RTE
+        # runnable (Task_<model> in the generated Rte.c), so config.* gets
+        # TASK_/ALARM_<model> - the model->OS wiring rte/README.md describes.
+        self.models = self._parse_models(doc.get("models", []) or [], sink)
+        # Model task bodies live in the generated Rte.c (Task_<model>), so they
+        # get no asw_<rate>ms.c skeleton and aren't listed as one in the Makefile.
+        self.model_task_names = {m["name"].upper() for m in self.models}
+        task_specs = list(doc.get("tasks", []))
+        for m in self.models:
+            task_specs.append({
+                "name": m["name"],
+                "period_ms": m["rate_ms"],
+                "wcet_ms": m.get("wcet_ms", 1),
+                "entry": f"Task_{m['name']}",
+            })
+        tasks = [Task(t, sink) for t in task_specs]
         if not 1 <= len(tasks) <= 8:
             sink.error("TASK_COUNT",
                        "1..8 tasks required (8-bit ready mask)", "tasks")
@@ -253,6 +268,30 @@ class System:
                            f"base period - release points drift apart")
                     self.warnings.append(msg)
                     sink.warning("HARMONIC", msg, f"task {slow.name}")
+
+    def _parse_models(self, models, sink):
+        """Structural check of models: entries (enough to synthesize the OS
+        task). Full ERT parsing + port binding happens in models.resolve_model
+        during RTE generation, not here (System stays filesystem-free)."""
+        out = []
+        for i, m in enumerate(models):
+            where = f"model[{i}]"
+            if not check_keys(m, "model", where, sink):
+                continue
+            name = m.get("name")
+            if not name:
+                sink.error("MODEL_NO_NAME", f"{where}: needs a 'name'", where)
+                continue
+            if m.get("rate_ms") is None:
+                sink.error("MODEL_NO_RATE",
+                           f"model '{name}': needs 'rate_ms'", f"model '{name}'")
+                continue
+            out.append(m)
+        if len(out) > 1:
+            sink.error("MULTI_MODEL",
+                       "only one model per app for now (single RTE)", "models")
+            out = out[:1]
+        return out
 
     def _parse_gpio(self, entries, sink):
         """Parse the gpio: list into normalized pin records."""

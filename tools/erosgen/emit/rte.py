@@ -102,7 +102,31 @@ def _adapter(port):
             f'({port.direction}) not supported yet"']
 
 
-def emit_rte_c(rm, src_name):
+def emit_rte_h(rm, src_name):
+    L = []
+    L.append("/**")
+    L.append(" * @file    Rte.h")
+    L.append(f" * @brief   {GENERATED_BANNER.format(src=src_name)}")
+    L.append(" *")
+    L.append(f" * RTE public API for the '{rm.name}' model<->OS integration.")
+    L.append(" */")
+    L.append("")
+    L.append("#ifndef RTE_H")
+    L.append("#define RTE_H")
+    L.append("")
+    L.append("/** BSW init for the bound ports + ASW init. Call once, with")
+    L.append(" *  interrupts disabled (StartupHook via os_gen.h). */")
+    L.append("void Rte_Init(void);")
+    L.append("")
+    L.append("/** One activation: read input ports <- BSW, run the runnable,")
+    L.append(" *  write output ports -> BSW. */")
+    L.append(f"void Rte_Run_{rm.name}(void);")
+    L.append("")
+    L.append("#endif /* RTE_H */")
+    return "\n".join(L) + "\n"
+
+
+def emit_rte_c(rm, src_name, integrated=False):
     headers = []
     for port in rm.inputs + rm.outputs:
         h = _DRIVER_HEADER.get(port.driver)
@@ -133,11 +157,16 @@ def emit_rte_c(rm, src_name):
         for h in headers:
             L.append(f'#include "{h}"')
     L.append("")
-    L.append("/* OS binding headers - only in a full-OS build (see Rte_Start). */")
-    L.append("#ifdef RTE_WITH_EROS")
-    L.append('#include "eros.h"')
-    L.append('#include "config.h"')
-    L.append("#endif")
+    if integrated:
+        L.append("/* OS: the runnable is wrapped as an EROS task (Task_<model>). */")
+        L.append('#include "eros.h"')
+        L.append('#include "config.h"')
+    else:
+        L.append("/* OS binding headers - only in a full-OS build (see Rte_Start). */")
+        L.append("#ifdef RTE_WITH_EROS")
+        L.append('#include "eros.h"')
+        L.append('#include "config.h"')
+        L.append("#endif")
     L.append("")
     L.append("/* --- Port adapters (IoHwAb): BSW signals <-> ASW ports ---------- */")
     L.append("")
@@ -182,13 +211,23 @@ def emit_rte_c(rm, src_name):
             L.append(f"    Rte_Write_{port.stem}(RTE_CFG_{port.tag}_SIGNAL);")
     L.append("}")
     L.append("")
-    L.append("/* --- OS binding (production build only) ------------------------- */")
-    L.append("")
-    L.append("#ifdef RTE_WITH_EROS")
-    L.append("void Rte_Start(void)")
-    L.append("{")
-    L.append(f"    (void)SetRelAlarm(ALARM_{rm.name.upper()},")
-    L.append("                      RTE_CFG_PERIOD_MS, RTE_CFG_PERIOD_MS);")
-    L.append("}")
-    L.append("#endif")
+    if integrated:
+        L.append("/* --- OS task body: the cyclic alarm (armed by os_gen.h) ---------- */")
+        L.append("/* activates this task; it runs one pass and terminates. --------- */")
+        L.append("")
+        L.append(f"void Task_{rm.name}(void)")
+        L.append("{")
+        L.append(f"    Rte_Run_{rm.name}();")
+        L.append("    TerminateTask();")
+        L.append("}")
+    else:
+        L.append("/* --- OS binding (production build only) ------------------------- */")
+        L.append("")
+        L.append("#ifdef RTE_WITH_EROS")
+        L.append("void Rte_Start(void)")
+        L.append("{")
+        L.append(f"    (void)SetRelAlarm(ALARM_{rm.name.upper()},")
+        L.append("                      RTE_CFG_PERIOD_MS, RTE_CFG_PERIOD_MS);")
+        L.append("}")
+        L.append("#endif")
     return "\n".join(L) + "\n"
