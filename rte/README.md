@@ -8,7 +8,7 @@ the application software (Simulink models) to the basic software (drivers
 ASW   codegen/<model>_ert_rtw/     generated algorithm: ports + runnable
  │                                  (frozen — never edited)
 RTE   rte/                          THIS layer — the only thing that changes
- │                                  port data flow · calibration · scheduling
+ │                                  port data flow · scheduling
 BSW   drivers/ (MCAL) + kernel/     hardware drivers + EROS OS
                                     (frozen — never edited)
 ```
@@ -22,19 +22,20 @@ BSW   drivers/ (MCAL) + kernel/     hardware drivers + EROS OS
 - **BSW** — `drivers/` are already "app-agnostic, kernel-independent,
   pure avr-libc + registers" (drivers/README) — textbook **MCAL**. The
   EROS kernel is the **OS**. Neither knows about any model.
-- **RTE** — the only code that references both. It owns the three
-  responsibilities: **port data flow**, **calibration**, **scheduling**.
+- **RTE** — the only code that references both. It owns **port data flow**
+  and **scheduling** (and **calibration** only for SWCs that *import* their
+  parameters — see the table).
 
 Everything the RTE needs is a *binding*, not logic — so the RTE is
 declarative and (see below) generatable.
 
-## The three RTE responsibilities
+## RTE responsibilities
 
 | # | Responsibility | Where |
 |---|---|---|
 | 1 | **Port data flow** — read BSW sensors into ASW input ports; write ASW output ports to BSW actuators (the IoHwAb adapters `Rte_Read_*` / `Rte_Write_*`) | `Rte.c` |
-| 2 | **Calibration** — assign the ASW's exported parameter globals from a single config owner | `Rte_Init()` ← `Rte_Cfg.h` |
-| 3 | **Scheduling** — bind the runnable's rate to an EROS task + cyclic alarm | `Rte_Start()` ← `Rte_Cfg.h` |
+| 2 | **Scheduling** — bind the runnable's rate to an EROS task + cyclic alarm | `Rte_Start()` ← `Rte_Cfg.h` |
+| — | **Calibration** — *only when the SWC imports its parameters* (`ImportFromFile`). `appKnbSwt` **exports** them (`ExportToFile`), so `appKnbSwt_Param.c` owns the values and the RTE does **not** assign them (see "Tuning"). | n/a here |
 
 `Rte_Run_appKnbSwt()` is the OS task body: *read ports → run runnable →
 write ports*. EROS calls it from a cyclic alarm in production; the simavr
@@ -88,9 +89,8 @@ models:
           driver: dio                    #   GPIO
           port: B
           bit: 5
-    calibration:                        # -> assigned in Rte_Init()
-      Knb_Thresh_Pc_Pt: 20
-      Knb_Hyst_Pc_Pt: 5
+    # calibration: only for SWCs that IMPORT their parameters
+    # (ImportFromFile). appKnbSwt exports them, so none here.
 ```
 
 From this one block erosgen would generate: `Rte_Cfg.h` (the tables
@@ -101,6 +101,18 @@ hand-written surface dropping to zero. The current hand-written RTE is
 shaped as exactly that template so wiring it into erosgen is a fill-in,
 not a redesign. (This generation step is not implemented yet — the RTE is
 hand-written for now.)
+
+## Tuning (calibration)
+
+`appKnbSwt` exports its parameters (`Knb_Thresh_Pc_Pt`, `Knb_Hyst_Pc_Pt`)
+with Embedded Coder's `ExportToFile` storage, so `appKnbSwt_Param.c` is the
+single source of truth for their values — the RTE does not touch them.
+Retune either by changing them in the model and regenerating, or **live in
+a debugger**: they compile to plain SRAM globals, so under simavr's GDB
+stub you can `print Knb_Thresh_Pc_Pt` and `set var Knb_Thresh_Pc_Pt = 40`
+(and `watch OUT_Led1_B`) with no rebuild. To make the RTE own calibration
+instead, switch the model's parameter storage class to `ImportFromFile`
+and add a `calibration:` block (above) — a model choice, not an RTE one.
 
 ## Verified under simavr
 
