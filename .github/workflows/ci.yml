@@ -119,3 +119,28 @@ jobs:
           else
             echo "::error::qemu exited early (rc=$rc)"; exit 1
           fi
+
+  # -------------------------------------------------------------------
+  # GUI - the thin PySide6 view; exercised headless (Qt offscreen).
+  # -------------------------------------------------------------------
+  gui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Qt offscreen system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libglib2.0-0
+
+      - name: Install GUI + engine deps
+        run: pip install pyside6 "ruamel.yaml" pyyaml pytest
+
+      - name: GUI tests (ProjectModel + offscreen MainWindow)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest gui/test_gui.py -q
