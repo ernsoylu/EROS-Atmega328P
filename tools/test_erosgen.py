@@ -226,6 +226,31 @@ def test_parse_ert_appknbswt():
     assert cal["Knb_Hyst_Pc_Pt"].ctype == "uint8_T"
 
 
+def test_bind_compatibility():
+    from erosgen import Diagnostics
+    from erosgen.bind import check_binding
+    from erosgen.parse import Signal
+
+    def codes(sig, direction, driver, params):
+        s = Diagnostics(strict=False)
+        check_binding(sig, direction, driver, params, s, "port")
+        return {d.code for d in s.items}
+
+    knb = Signal("IN_KnbVal_Z", "uint16_T", "in")
+    led = Signal("OUT_Led1_B", "boolean_T", "out")
+    # the appKnbSwt bindings are clean
+    assert codes(knb, "in", "adc", {"channel": 0}) == set()
+    assert codes(led, "out", "dio", {"port": "B", "bit": 5}) == set()
+    # uint8 can't hold the ADC's 0..1023 range
+    assert "TYPE_TOO_NARROW" in codes(Signal("IN_X", "uint8_T", "in"),
+                                      "in", "adc", {"channel": 0})
+    # adc is input-only
+    assert "DRIVER_DIRECTION" in codes(Signal("OUT_X", "uint16_T", "out"),
+                                       "out", "adc", {"channel": 0})
+    assert "UNKNOWN_DRIVER" in codes(led, "out", "nope", {})
+    assert "BINDING_MISSING_KEY" in codes(knb, "in", "adc", {})
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
