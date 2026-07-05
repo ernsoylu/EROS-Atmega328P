@@ -84,10 +84,87 @@ class ProjectModel:
         return rows
 
     def diagnostics(self):
-        """Live, non-throwing [Diagnostic] for the current (possibly invalid)
-        document - the GUI's problem list."""
-        return erosgen.collect_diagnostics(self.plain,
-                                           self.path or Path("app.yaml"))
+        """Live, non-throwing [Diagnostic] for the current document - the GUI's
+        problem list. Merges System validation (collect_diagnostics) with model
+        port-binding validation (resolve_models needs the ERT files), so
+        unbound/mistyped ports show up too."""
+        from erosgen import Diagnostics
+        from erosgen.models import resolve_models
+        items = list(erosgen.collect_diagnostics(self.plain,
+                                                 self.path or Path("app.yaml")))
+        app_dir = self.path.parent if self.path else Path(".")
+        msink = Diagnostics(strict=False)
+        try:
+            resolve_models(self.plain, app_dir, msink)
+        except Exception:  # pragma: no cover - binding is best-effort in the GUI
+            pass
+        seen, merged = set(), []
+        for d in items + list(msink.items):
+            key = (d.severity, d.code, d.location, d.message)
+            if key not in seen:
+                seen.add(key)
+                merged.append(d)
+        return merged
+
+    # ---- model / peripheral binding ------------------------------------
+    def model_signals(self, codegen_dir, name=None):
+        """Parse a codegen <model>_ert_rtw dir. Returns
+        (model_name, [(signal, ctype, direction)], runnable_fn)."""
+        base = Path(codegen_dir)
+        name = name or base.name.replace("_ert_rtw", "")
+        mi = erosgen.parse_model(base, name)
+        sigs = [(s.name, s.ctype, s.direction) for s in mi.signals]
+        runnable = mi.runnable_fns[0] if mi.runnable_fns else ""
+        return name, sigs, runnable
+
+    def add_model(self, name, codegen_dir, runnable, rate_ms=10):
+        """Add a models: entry with each IN_/OUT_ signal as a port (driver TBD -
+        the live diagnostics then flag each as needing a binding)."""
+        mi = erosgen.parse_model(Path(codegen_dir), name)
+        ports = {"in": [], "out": []}
+        for s in mi.signals:
+            if s.direction in ("in", "out"):
+                ports[s.direction].append({"signal": s.name})
+        self.doc.setdefault("models", []).append({
+            "name": name, "codegen_dir": str(codegen_dir),
+            "runnable": runnable, "rate_ms": int(rate_ms), "ports": ports})
+
+    def model_port_signals(self, model_name):
+        out = []
+        for m in self.doc.get("models", []) or []:
+            if isinstance(m, dict) and m.get("name") == model_name:
+                for direction in ("in", "out"):
+                    for pd in (m.get("ports", {}) or {}).get(direction, []) or []:
+                        if isinstance(pd, dict) and "signal" in pd:
+                            out.append((pd["signal"], direction))
+        return out
+
+    def bind_port(self, model_name, signal, driver, **params):
+        """Bind a model's port signal to a peripheral driver (+ params)."""
+        for m in self.doc.get("models", []) or []:
+            if isinstance(m, dict) and m.get("name") == model_name:
+                for direction in ("in", "out"):
+                    for pd in (m.get("ports", {}) or {}).get(direction, []) or []:
+                        if isinstance(pd, dict) and pd.get("signal") == signal:
+                            pd["driver"] = driver
+                            pd.update(params)
+                            return True
+        return False
+
+    def port_binding(self, model_name, signal):
+        """Human-readable binding for a port ('adc channel=0', 'unbound', ...)."""
+        for m in self.doc.get("models", []) or []:
+            if isinstance(m, dict) and m.get("name") == model_name:
+                for direction in ("in", "out"):
+                    for pd in (m.get("ports", {}) or {}).get(direction, []) or []:
+                        if isinstance(pd, dict) and pd.get("signal") == signal:
+                            drv = pd.get("driver")
+                            if not drv:
+                                return "unbound"
+                            extra = " ".join(f"{k}={pd[k]}" for k in
+                                             ("channel", "port", "bit") if k in pd)
+                            return f"{drv} {extra}".strip()
+        return ""
 
     # ---- editing --------------------------------------------------------
     def available_mcus(self):

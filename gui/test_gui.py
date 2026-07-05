@@ -95,6 +95,36 @@ def test_mainwindow_new_project():
     w.close()
 
 
+def test_projectmodel_add_model_and_bind():
+    p = ProjectModel()
+    p.new("swc_demo", "atmega328p")
+    cg = str(REPO / "codegen" / "appKnbSwt_ert_rtw")
+    name, sigs, runnable = p.model_signals(cg)
+    assert name == "appKnbSwt" and runnable == "appKnbSwt_Runnable"
+    assert ("IN_KnbVal_Z", "uint16_T", "in") in sigs
+    p.add_model(name, cg, runnable, rate_ms=10)
+    # ports listed but unbound -> the live problem list flags missing drivers
+    assert "PORT_NO_DRIVER" in {d.code for d in p.diagnostics()}
+    assert p.port_binding(name, "IN_KnbVal_Z") == "unbound"
+    p.bind_port(name, "IN_KnbVal_Z", "adc", channel=0)
+    p.bind_port(name, "OUT_Led1_B", "dio", port="B", bit=5)
+    assert p.port_binding(name, "IN_KnbVal_Z") == "adc channel=0"
+    # bound -> resolves type-clean
+    errs = [d for d in p.diagnostics() if d.severity == "error"]
+    assert errs == [], [e.message for e in errs]
+
+
+def test_mainwindow_shows_model_ports():
+    from gui.main_window import MainWindow
+    _app()
+    w = MainWindow(ProjectModel(MODEL_APP))
+    roots = [w.tree.topLevelItem(i) for i in range(w.tree.topLevelItemCount())]
+    models_root = next(r for r in roots if r.text(0) == "Models")
+    assert models_root.childCount() == 1
+    assert models_root.child(0).childCount() == 2  # IN_KnbVal_Z + OUT_Led1_B
+    w.close()
+
+
 def test_mainwindow_mcu_combo_live():
     from gui.main_window import MainWindow
     _app()

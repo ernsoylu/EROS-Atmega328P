@@ -77,6 +77,11 @@ class MainWindow(QMainWindow):
         editm.addAction("&Remove Selected Task").triggered.connect(
             self.remove_selected_task)
 
+        modelm = self.menuBar().addMenu("&Model")
+        modelm.addAction("&Add Model from codegen…").triggered.connect(
+            self.add_model_dialog)
+        modelm.addAction("&Bind Port…").triggered.connect(self.bind_port_dialog)
+
         self.menuBar().addMenu("&Help").addAction("&About").triggered.connect(
             self.about)
 
@@ -122,7 +127,10 @@ class MainWindow(QMainWindow):
         models = p.models()
         mroot = QTreeWidgetItem(self.tree, ["Models", str(len(models))])
         for m in models:
-            QTreeWidgetItem(mroot, [m["name"], f"{m['rate_ms']} ms"])
+            mi = QTreeWidgetItem(mroot, [m["name"], f"{m['rate_ms']} ms"])
+            for sig, direction in p.model_port_signals(m["name"]):
+                QTreeWidgetItem(mi, [f"{sig} ({direction})",
+                                     p.port_binding(m["name"], sig)])
 
         b = p.budget()
         memroot = QTreeWidgetItem(self.tree, ["Memory (static RAM)", ""])
@@ -203,6 +211,63 @@ class MainWindow(QMainWindow):
         if it and it.parent() and it.parent().text(0) == "Tasks":
             self.project.remove_task(it.text(0))
             self.refresh()
+
+    def add_model_dialog(self):
+        from PySide6.QtWidgets import QInputDialog
+        d = QFileDialog.getExistingDirectory(self, "Select a <model>_ert_rtw dir")
+        if not d:
+            return
+        try:
+            name, sigs, runnable = self.project.model_signals(d)
+        except Exception as e:
+            QMessageBox.warning(self, "Add Model", f"Could not parse: {e}")
+            return
+        rate, ok = QInputDialog.getInt(self, "Add Model",
+                                       f"{name}: runnable rate (ms)", 10, 1, 32767)
+        if not ok:
+            return
+        self.project.add_model(name, d, runnable, rate)
+        self.console.appendPlainText(
+            f"added model {name}: {len(sigs)} signals — now bind their ports")
+        self.refresh()
+
+    def bind_port_dialog(self):
+        from PySide6.QtWidgets import QInputDialog
+        models = [m["name"] for m in self.project.models()]
+        if not models:
+            QMessageBox.information(self, "Bind Port", "Add a model first.")
+            return
+        model, ok = QInputDialog.getItem(self, "Bind Port", "Model:", models,
+                                         0, False)
+        if not ok:
+            return
+        sigs = [f"{s} ({d})" for s, d in self.project.model_port_signals(model)]
+        if not sigs:
+            QMessageBox.information(self, "Bind Port", "That model has no ports.")
+            return
+        choice, ok = QInputDialog.getItem(self, "Bind Port", "Signal:", sigs,
+                                          0, False)
+        if not ok:
+            return
+        signal = choice.split(" ")[0]
+        driver, ok = QInputDialog.getItem(self, "Bind Port",
+                                          f"Driver for {signal}:",
+                                          ["adc", "dio", "pwm"], 0, False)
+        if not ok:
+            return
+        params, ok = QInputDialog.getText(
+            self, "Bind Port",
+            "Params (e.g. 'channel=0' or 'port=B, bit=5'; blank for pwm):")
+        if not ok:
+            return
+        kw = {}
+        for kv in params.split(","):
+            if "=" in kv:
+                k, v = (x.strip() for x in kv.split("=", 1))
+                kw[k] = int(v) if v.lstrip("-").isdigit() else v
+        self.project.bind_port(model, signal, driver, **kw)
+        self.console.appendPlainText(f"bound {model}.{signal} → {driver} {kw}")
+        self.refresh()
 
     def generate(self):
         if not self.project.path:
