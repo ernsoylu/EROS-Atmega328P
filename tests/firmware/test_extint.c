@@ -15,7 +15,8 @@
 
 int main(void)
 {
-    uint8_t c1, c2;
+    uint8_t c1;
+    uint8_t c2;
 
     tk_init();
 

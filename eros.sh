@@ -33,7 +33,7 @@ FLASH_BUDGET=3072
 RAM_BUDGET=128
 
 # ----- pretty output (degrades gracefully when not a TTY) ---------------
-if [ -t 1 ]; then
+if [[ -t 1 ]]; then
     C_R=$'\e[31m'; C_G=$'\e[32m'; C_Y=$'\e[33m'; C_B=$'\e[1m'; C_N=$'\e[0m'
 else
     C_R=; C_G=; C_Y=; C_B=; C_N=
@@ -57,7 +57,7 @@ check_tool() {   # check_tool <command> <required:0|1> <hint>
         ver=$("$tool" --version 2>/dev/null | head -n1 || true)
         ok "$(printf '%-13s %s' "$tool" "$ver")"
     else
-        if [ "$required" -eq 1 ]; then
+        if [[ "$required" -eq 1 ]]; then
             bad "$(printf '%-13s missing  (%s)' "$tool" "$hint")"
             MISSING=$((MISSING + 1))
         else
@@ -97,9 +97,9 @@ do_check() {
     check_tool avrdude   0 "avrdude, needed only to flash a board"
 
     echo
-    if [ "$MISSING" -eq 0 ]; then
+    if [[ "$MISSING" -eq 0 ]]; then
         say "${C_G}All required components present.${C_N}"
-        [ "$MISSING_OPT" -gt 0 ] && say "Some optional tools are missing (see above)."
+        [[ "$MISSING_OPT" -gt 0 ]] && say "Some optional tools are missing (see above)."
         say "Next: ${C_B}./eros.sh -build${C_N}"
         return 0
     else
@@ -121,37 +121,40 @@ detect_pm() {
 do_install() {
     head1 "EROS toolchain install"
     local pm; pm=$(detect_pm)
-    [ -z "$pm" ] && die "no supported package manager found (apt/dnf/yum/pacman/zypper/apk/brew). Install gcc-avr, avr-libc, binutils-avr, avrdude and make manually."
+    [[ -z "$pm" ]] && die "no supported package manager found (apt/dnf/yum/pacman/zypper/apk/brew). Install gcc-avr, avr-libc, binutils-avr, avrdude and make manually."
 
-    local SUDO=""
-    if [ "$(id -u)" -ne 0 ] && [ "$pm" != "brew" ]; then
-        if command -v sudo >/dev/null 2>&1; then SUDO="sudo"
+    local sudo_cmd=""
+    if [[ "$(id -u)" -ne 0 ]] && [[ "$pm" != "brew" ]]; then
+        if command -v sudo >/dev/null 2>&1; then sudo_cmd="sudo"
         else die "not root and sudo not available; re-run as root."; fi
     fi
 
     say "Package manager: $pm"
     case "$pm" in
         apt-get)
-            $SUDO apt-get update
-            $SUDO apt-get install -y gcc-avr avr-libc binutils-avr avrdude make
+            $sudo_cmd apt-get update
+            $sudo_cmd apt-get install -y gcc-avr avr-libc binutils-avr avrdude make
             ;;
         dnf|yum)
-            $SUDO "$pm" install -y avr-gcc avr-libc avr-binutils avrdude make
+            $sudo_cmd "$pm" install -y avr-gcc avr-libc avr-binutils avrdude make
             ;;
         pacman)
-            $SUDO pacman -Sy --needed --noconfirm avr-gcc avr-libc avr-binutils avrdude make
+            $sudo_cmd pacman -Sy --needed --noconfirm avr-gcc avr-libc avr-binutils avrdude make
             ;;
         zypper)
             # openSUSE ships versioned cross compilers; try the common names.
-            $SUDO zypper --non-interactive install cross-avr-gcc cross-avr-binutils avr-libc avrdude make \
+            $sudo_cmd zypper --non-interactive install cross-avr-gcc cross-avr-binutils avr-libc avrdude make \
                 || die "openSUSE package names vary by release; install a cross-avr-gcc*, cross-avr-binutils, avr-libc, avrdude and make manually."
             ;;
         apk)
-            $SUDO apk add gcc-avr avr-libc binutils-avr avrdude make
+            $sudo_cmd apk add gcc-avr avr-libc binutils-avr avrdude make
             ;;
         brew)
             brew tap osx-cross/avr
             brew install avr-gcc avrdude   # make ships with the Xcode CLT
+            ;;
+        *)
+            die "internal: unhandled package manager '$pm'"
             ;;
     esac
 
@@ -187,7 +190,7 @@ budget_check() {
     mkdir -p "$bdir"
     local nolto=()
     local f
-    for f in "${CFLAGS[@]}"; do [ "$f" = "-flto" ] || nolto+=("$f"); done
+    for f in "${CFLAGS[@]}"; do [[ "$f" == "-flto" ]] || nolto+=("$f"); done
     avr-gcc "${nolto[@]}" -I"$SCRIPT_DIR" -I"$SCRIPT_DIR/kernel" -c \
         -o "$bdir/eros.o"   "$SCRIPT_DIR/kernel/eros.c"
     avr-gcc "${nolto[@]}" -I"$SCRIPT_DIR" -I"$SCRIPT_DIR/kernel" -c \
@@ -254,7 +257,7 @@ detect_ports() {
     for p in /dev/ttyUSB* /dev/ttyACM* \
              /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.usbmodem* \
              /dev/tty.usbserial* /dev/tty.wchusbserial*; do
-        [ -e "$p" ] && printf '%s\n' "$p"
+        [[ -e "$p" ]] && printf '%s\n' "$p"
     done
 }
 
@@ -262,7 +265,9 @@ detect_ports() {
 # (bootloader) programmer? No -U operation -> avrdude reads the signature
 # and exits; 0 means the device matched -p m328p.
 probe_target() {   # probe_target <port> <baud>
-    avrdude -p m328p -c arduino -P "$1" -b "$2" -qq >/dev/null 2>&1
+    local port="$1"
+    local baud="$2"
+    avrdude -p m328p -c arduino -P "$port" -b "$baud" -qq >/dev/null 2>&1
 }
 
 do_flash() {
@@ -278,26 +283,26 @@ do_flash() {
         *.hex)                       hex="$target"; is_path=1 ;;
         *) die "unknown flash target '$target' (use: eros | demo | <file.hex>)" ;;
     esac
-    if [ "$is_path" -eq 0 ] && [ ! -f "$hex" ]; then
+    if [[ "$is_path" -eq 0 ]] && [[ ! -f "$hex" ]]; then
         say "firmware not built yet ($hex); building..."
         do_build
         echo
     fi
-    [ -f "$hex" ] || die "firmware not found: $hex"
+    [[ -f "$hex" ]] || die "firmware not found: $hex"
 
     head1 "Flashing $(basename "$hex")"
 
     # --- identify the target (port + bootloader baud) ----------------
     local pport=${EROS_PORT:-} pbaud=${EROS_BAUD:-}
     local ports=() bauds=()
-    if [ -n "$pport" ]; then
+    if [[ -n "$pport" ]]; then
         ports=("$pport")
     else
         local line
         while IFS= read -r line; do ports+=("$line"); done < <(detect_ports)
-        [ "${#ports[@]}" -eq 0 ] && die "no serial port found (looked for /dev/ttyUSB*, /dev/ttyACM*, /dev/cu.usb*). Plug in the board, or set EROS_PORT=/dev/..."
+        [[ "${#ports[@]}" -eq 0 ]] && die "no serial port found (looked for /dev/ttyUSB*, /dev/ttyACM*, /dev/cu.usb*). Plug in the board, or set EROS_PORT=/dev/..."
     fi
-    if [ -n "$pbaud" ]; then bauds=("$pbaud"); else bauds=(57600 115200); fi
+    if [[ -n "$pbaud" ]]; then bauds=("$pbaud"); else bauds=(57600 115200); fi
 
     say "candidate ports: ${ports[*]}"
     local port baud found_port="" found_baud=""
@@ -311,7 +316,7 @@ do_flash() {
             printf 'no response\n'
         done
     done
-    [ -z "$found_port" ] && die "no ATmega328P responded (ports: ${ports[*]}, bauds: ${bauds[*]}). Check the cable/board, or force with EROS_PORT= and EROS_BAUD=."
+    [[ -z "$found_port" ]] && die "no ATmega328P responded (ports: ${ports[*]}, bauds: ${bauds[*]}). Check the cable/board, or force with EROS_PORT= and EROS_BAUD=."
 
     say "target: ${C_B}ATmega328P on $found_port @ $found_baud baud${C_N}"
     echo

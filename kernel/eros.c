@@ -204,12 +204,10 @@ static StatusType os_ActivateInternal(TaskType task)
 /* ================================================================== */
 ISR(TIMER2_COMPA_vect)
 {
-    uint8_t i;
-
     os_tickCount++;
     const TickType now = os_tickCount;
 
-    for (i = 0u; i < OS_NUM_ALARMS; i++)
+    for (uint8_t i = 0u; i < OS_NUM_ALARMS; i++)
     {
         volatile OsAlarmStateType *const a = &os_alarmState[i];
 
@@ -651,9 +649,7 @@ static void os_ReleaseLeakedResources(void)
 
 static void os_PoolInit(void)
 {
-    uint8_t i;
-
-    for (i = 0u; i < (uint8_t)(OS_POOL_NUM_BLOCKS - 1u); i++)
+    for (uint8_t i = 0u; i < (uint8_t)(OS_POOL_NUM_BLOCKS - 1u); i++)
     {
         OS_poolArena[(uint16_t)i * OS_POOL_BLOCK_SIZE] = (uint8_t)(i + 1u);
     }

@@ -15,7 +15,9 @@
 
 int main(void)
 {
-    uint16_t a0, a1, a2;
+    uint16_t a0;
+    uint16_t a1;
+    uint16_t a2;
 
     tk_init();
 

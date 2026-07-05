@@ -22,6 +22,12 @@
 /* BSW - MCAL drivers (read-only) */
 #include "adc.h"              /* drivers/adc.c                             */
 
+/* OS binding headers - only in a full-OS build (see Rte_Start below). */
+#ifdef RTE_WITH_EROS
+#include "eros.h"
+#include "config.h"
+#endif
+
 /* --- Port adapters (IoHwAb): BSW signals <-> ASW ports -------------- */
 
 /* Input port KnbVal: ADC conversion -> 0..1023 count. */
@@ -75,9 +81,6 @@ void Rte_Run_appKnbSwt(void)
 /* --- OS binding (production build only) ----------------------------- */
 
 #ifdef RTE_WITH_EROS
-#include "eros.h"
-#include "config.h"
-
 void Rte_Start(void)
 {
     /* Assign the runnable's rate to the OS: a cyclic alarm releases the

@@ -16,7 +16,8 @@
 
 int main(void)
 {
-    uint8_t level, ev;
+    uint8_t level;
+    uint8_t ev;
 
     tk_init();
 

@@ -21,7 +21,7 @@
  *           [--adc-sweep CH:HI:LO:HALF_MS]
  *                                   triangle ramp: HI->LO over HALF_MS,
  *                                   then LO->HI over HALF_MS, then hold HI
- *           [--spi-echo]            SPI slave returns the byte just sent
+ *           [--spi-slave HEX]       SPI slave returns constant byte HEX
  *           [--pin P,BIT,US,LVL]... drive PORTx pin BIT to LVL at +US us
  *           [--watch-pin P,BIT]     log transitions of output pin P,BIT
  */
@@ -77,17 +77,25 @@ static void uart_out_cb(struct avr_irq_t *irq, uint32_t value, void *param)
     }
 }
 
-/* --- SPI slave: echo the byte the master just clocked out ---------- */
+/* --- SPI slave: return a fixed byte on MISO ------------------------ */
+/* simavr completes a master transfer by raising SPI OUTPUT (with SPDR's
+ * contents); a slave then drives MISO by raising SPI INPUT, which simavr
+ * writes into SPDR before the master reads it. Returning a constant byte
+ * (rather than echoing the sent byte) is deterministic and independent of
+ * whether the installed simavr leaves the sent byte in SPDR.
+ * NOTE: the SPI instance name is 0 (AVR_SPI_DECLARE leaves .name unset),
+ * not '0' like the UART - AVR_IOCTL_SPI_GETIRQ(0) is required. */
 
 static avr_t *g_avr = NULL;
 
-static void spi_echo_cb(struct avr_irq_t *irq, uint32_t value, void *param)
+struct spi_slave { int active; uint8_t byte; };
+static struct spi_slave g_spi = { 0, 0 };
+
+static void spi_slave_cb(struct avr_irq_t *irq, uint32_t value, void *param)
 {
-    (void)irq; (void)param;
-    /* Feed the same byte back as the slave's response so the master's
-     * SPI_Transfer() sees a known, deterministic MISO stream. */
-    avr_raise_irq(avr_io_getirq(g_avr, AVR_IOCTL_SPI_GETIRQ('0'),
-                                SPI_IRQ_INPUT), value & 0xFF);
+    (void)irq; (void)value; (void)param;
+    avr_raise_irq(avr_io_getirq(g_avr, AVR_IOCTL_SPI_GETIRQ(0),
+                                SPI_IRQ_INPUT), g_spi.byte);
 }
 
 /* --- Scheduled GPIO edge ------------------------------------------- */
@@ -121,7 +129,13 @@ static int            g_nadc = 0;
 /* Models a knob swept HI -> LO over half_ms, then LO -> HI over the next
  * half_ms, then held at HI. Re-fires every 1 ms of simulated time. */
 
-struct adc_sweep { uint8_t ch; long hi_mv, lo_mv, half_ms; int active; };
+struct adc_sweep {
+    uint8_t ch;
+    long    hi_mv;
+    long    lo_mv;
+    long    half_ms;
+    int     active;
+};
 static struct adc_sweep g_sweep = { 0, 0, 0, 0, 0 };
 
 static avr_cycle_count_t adc_sweep_cb(struct avr_t *avr,
@@ -160,85 +174,124 @@ static void watch_pin_cb(struct avr_irq_t *irq, uint32_t value, void *param)
            g_watch.port, g_watch.bit, value & 1u, ms);
 }
 
-int main(int argc, char **argv)
-{
-    const char *fname   = NULL;
-    const char *mcu     = "atmega328p";
-    uint32_t    freq    = 16000000;
-    uint32_t    timeout = 2000;   /* ms of simulated time */
+/* --- Command-line parsing ------------------------------------------ */
+/* Each token parser is a small leaf so the dispatch in parse_args stays a
+ * flat, low-complexity else-if chain. */
 
+static void parse_adc(const char *s)
+{
+    unsigned ch;
+    unsigned mv;
+    if (sscanf(s, "%u:%u", &ch, &mv) == 2 && g_nadc < MAX_STIM)
+    {
+        g_adc[g_nadc].ch = (uint8_t)ch;
+        g_adc[g_nadc].mv = mv;
+        g_nadc++;
+    }
+}
+
+static void parse_pin(const char *s)
+{
+    char     port;
+    unsigned bit;
+    unsigned us;
+    unsigned lvl;
+    if (sscanf(s, "%c,%u,%u,%u", &port, &bit, &us, &lvl) == 4 && g_npins < MAX_STIM)
+    {
+        g_pins[g_npins].port  = port;
+        g_pins[g_npins].bit   = (uint8_t)bit;
+        g_pins[g_npins].at_us = us;
+        g_pins[g_npins].level = (uint8_t)lvl;
+        g_npins++;
+    }
+}
+
+static void parse_sweep(const char *s)
+{
+    unsigned ch;
+    long     hi;
+    long     lo;
+    long     half;
+    if (sscanf(s, "%u:%ld:%ld:%ld", &ch, &hi, &lo, &half) == 4)
+    {
+        g_sweep.ch      = (uint8_t)ch;
+        g_sweep.hi_mv   = hi;
+        g_sweep.lo_mv   = lo;
+        g_sweep.half_ms = half > 0 ? half : 1;
+        g_sweep.active  = 1;
+    }
+}
+
+static void parse_watch(const char *s)
+{
+    char     port;
+    unsigned bit;
+    if (sscanf(s, "%c,%u", &port, &bit) == 2)
+    {
+        g_watch.port   = port;
+        g_watch.bit    = (uint8_t)bit;
+        g_watch.active = 1;
+    }
+}
+
+static void parse_spi_slave(const char *s)
+{
+    unsigned byte;
+    if (sscanf(s, "%x", &byte) == 1)
+    {
+        g_spi.byte   = (uint8_t)byte;
+        g_spi.active = 1;
+    }
+}
+
+struct opts {
+    const char *fname;
+    const char *mcu;
+    uint32_t    freq;
+    uint32_t    timeout;   /* ms of simulated time */
+};
+
+static void parse_args(int argc, char **argv, struct opts *o)
+{
     for (int i = 1; i < argc; i++)
     {
-        if (argv[i][0] != '-') { fname = argv[i]; continue; }
+        const char *a = argv[i];
 
-        if (!strcmp(argv[i], "--timeout-ms") && i + 1 < argc)
-            timeout = (uint32_t)strtoul(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--freq") && i + 1 < argc)
-            freq = (uint32_t)strtoul(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--mcu") && i + 1 < argc)
-            mcu = argv[++i];
-        else if (!strcmp(argv[i], "--echo"))
-            g_echo = 1;
-        /* --spi-echo is re-scanned as a plain flag after this loop. */
-        else if (!strcmp(argv[i], "--adc") && i + 1 < argc)
-        {
-            unsigned ch, mv;
-            if (sscanf(argv[++i], "%u:%u", &ch, &mv) == 2 && g_nadc < MAX_STIM)
-            { g_adc[g_nadc].ch = (uint8_t)ch; g_adc[g_nadc].mv = mv; g_nadc++; }
-        }
-        else if (!strcmp(argv[i], "--pin") && i + 1 < argc)
-        {
-            char port; unsigned bit, us, lvl;
-            if (sscanf(argv[++i], "%c,%u,%u,%u", &port, &bit, &us, &lvl) == 4
-                && g_npins < MAX_STIM)
-            {
-                g_pins[g_npins].port  = port;
-                g_pins[g_npins].bit   = (uint8_t)bit;
-                g_pins[g_npins].at_us = us;
-                g_pins[g_npins].level = (uint8_t)lvl;
-                g_npins++;
-            }
-        }
-        else if (!strcmp(argv[i], "--adc-sweep") && i + 1 < argc)
-        {
-            unsigned ch; long hi, lo, half;
-            if (sscanf(argv[++i], "%u:%ld:%ld:%ld", &ch, &hi, &lo, &half) == 4)
-            {
-                g_sweep.ch = (uint8_t)ch; g_sweep.hi_mv = hi;
-                g_sweep.lo_mv = lo; g_sweep.half_ms = half > 0 ? half : 1;
-                g_sweep.active = 1;
-            }
-        }
-        else if (!strcmp(argv[i], "--watch-pin") && i + 1 < argc)
-        {
-            char port; unsigned bit;
-            if (sscanf(argv[++i], "%c,%u", &port, &bit) == 2)
-            {
-                g_watch.port = port; g_watch.bit = (uint8_t)bit;
-                g_watch.active = 1;
-            }
-        }
+        /* Flags and the positional ELF name need no following token. */
+        if (a[0] != '-')                     o->fname = a;
+        else if (!strcmp(a, "--echo"))       g_echo = 1;
+        else if (i + 1 >= argc)              continue;   /* rest take a value */
+        else if (!strcmp(a, "--timeout-ms")) o->timeout = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(a, "--freq"))       o->freq = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(a, "--mcu"))        o->mcu = argv[++i];
+        else if (!strcmp(a, "--adc"))        parse_adc(argv[++i]);
+        else if (!strcmp(a, "--pin"))        parse_pin(argv[++i]);
+        else if (!strcmp(a, "--adc-sweep"))  parse_sweep(argv[++i]);
+        else if (!strcmp(a, "--watch-pin"))  parse_watch(argv[++i]);
+        else if (!strcmp(a, "--spi-slave"))  parse_spi_slave(argv[++i]);
     }
+}
 
-    if (!fname) { fprintf(stderr, "usage: runtest <fw.elf> [opts]\n"); return 3; }
+int main(int argc, char **argv)
+{
+    struct opts o = { NULL, "atmega328p", 16000000u, 2000u };
 
-    /* Re-scan for --spi-echo as a plain flag (kept separate from pins). */
-    int spi_echo = 0;
-    for (int i = 1; i < argc; i++)
-        if (!strcmp(argv[i], "--spi-echo")) spi_echo = 1;
+    parse_args(argc, argv, &o);
+
+    if (!o.fname) { fprintf(stderr, "usage: runtest <fw.elf> [opts]\n"); return 3; }
 
     elf_firmware_t fw;
     memset(&fw, 0, sizeof(fw));
-    if (elf_read_firmware(fname, &fw) != 0)
+    if (elf_read_firmware(o.fname, &fw) != 0)
     {
-        fprintf(stderr, "runtest: cannot read ELF '%s'\n", fname);
+        fprintf(stderr, "runtest: cannot read ELF '%s'\n", o.fname);
         return 3;
     }
 
-    avr_t *avr = avr_make_mcu_by_name(mcu);
-    if (!avr) { fprintf(stderr, "runtest: unknown mcu '%s'\n", mcu); return 3; }
+    avr_t *avr = avr_make_mcu_by_name(o.mcu);
+    if (!avr) { fprintf(stderr, "runtest: unknown mcu '%s'\n", o.mcu); return 3; }
     avr_init(avr);
-    avr->frequency = freq;
+    avr->frequency = o.freq;
     g_avr = avr;
     avr_load_firmware(avr, &fw);
 
@@ -251,10 +304,13 @@ int main(int argc, char **argv)
      * transmitted byte to it, so no flow-control flag tweaking is needed
      * for our small, promptly-drained bursts. */
 
-    if (spi_echo)
+    if (g_spi.active)
+        /* On each completed transfer (SPI OUTPUT), the slave drives the
+         * constant byte onto MISO (SPI INPUT), which simavr latches into
+         * SPDR before the master reads it back. */
         avr_irq_register_notify(
-            avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ('0'), SPI_IRQ_OUTPUT),
-            spi_echo_cb, NULL);
+            avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ(0), SPI_IRQ_OUTPUT),
+            spi_slave_cb, NULL);
 
     for (int i = 0; i < g_nadc; i++)
         avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_ADC_GETIRQ,
@@ -270,7 +326,7 @@ int main(int argc, char **argv)
         avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_ADC_GETIRQ,
                                     ADC_IRQ_ADC0 + g_sweep.ch),
                       (uint32_t)g_sweep.hi_mv);
-        avr_cycle_timer_register(avr, freq / 1000, adc_sweep_cb, NULL);
+        avr_cycle_timer_register(avr, o.freq / 1000, adc_sweep_cb, NULL);
     }
 
     if (g_watch.active)
@@ -278,7 +334,7 @@ int main(int argc, char **argv)
             avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ(g_watch.port),
                           g_watch.bit), watch_pin_cb, NULL);
 
-    uint64_t budget = (uint64_t)timeout * (freq / 1000);
+    uint64_t budget = (uint64_t)o.timeout * (o.freq / 1000);
     int      state  = cpu_Running;
 
     while (avr->cycle < budget && g_verdict == VERDICT_PENDING)
@@ -290,15 +346,15 @@ int main(int argc, char **argv)
 
     if (g_verdict == VERDICT_PASS)
     {
-        printf("PASS  %s\n", fname);
+        printf("PASS  %s\n", o.fname);
         return 0;
     }
     if (g_verdict == VERDICT_FAIL)
     {
-        printf("FAIL  %s :%s\n", fname, g_failtag);
+        printf("FAIL  %s :%s\n", o.fname, g_failtag);
         return 1;
     }
     fprintf(stderr, "TIMEOUT/NO-VERDICT  %s (cpu state %d, %llu cycles)\n",
-            fname, state, (unsigned long long)avr->cycle);
+            o.fname, state, (unsigned long long)avr->cycle);
     return 2;
 }

@@ -19,7 +19,8 @@
 
 int main(void)
 {
-    uint16_t period = 0u, pulse = 0u;
+    uint16_t period = 0u;
+    uint16_t pulse = 0u;
     uint8_t  alive;
 
     tk_init();

@@ -34,7 +34,6 @@ static uint8_t cmdLen;
 void Task_Cmd(void)
 {
     OsPoolHandleType h;
-    uint8_t          budget;
     char             c;
 
     /* --- 1. button events ----------------------------------------- */
@@ -55,7 +54,7 @@ void Task_Cmd(void)
     /* --- 2. serial command intake. The cap bounds the WCET; 64 (the
      * RX ring size) is the natural upper limit and outruns the wire:
      * 9600 baud delivers at most 48 bytes per 50 ms period. ---------- */
-    for (budget = 64u; (budget != 0u) && (UART_GetChar(&c) != 0u); budget--)
+    for (uint8_t budget = 64u; (budget != 0u) && (UART_GetChar(&c) != 0u); budget--)
     {
         if ((c == '\r') || (c == '\n'))
         {

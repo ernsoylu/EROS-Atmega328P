@@ -25,7 +25,7 @@ void tk_init(void)
 
 void tk_putc(char c)
 {
-    while ((UCSR0A & (uint8_t)(1u << UDRE0)) == 0u) { }
+    while ((UCSR0A & (uint8_t)(1u << UDRE0)) == 0u) { /* wait for TX ready */ }
     UDR0 = (uint8_t)c;
 }
 
@@ -61,7 +61,7 @@ static void tk_halt(void) __attribute__((noreturn));
 static void tk_halt(void)
 {
     while ((UCSR0A & (uint8_t)(1u << TXC0)) == 0u &&
-           (UCSR0A & (uint8_t)(1u << UDRE0)) == 0u) { }
+           (UCSR0A & (uint8_t)(1u << UDRE0)) == 0u) { /* let last byte drain */ }
     cli();
     set_sleep_mode(SLEEP_MODE_PWR_DOWN);
     sleep_enable();

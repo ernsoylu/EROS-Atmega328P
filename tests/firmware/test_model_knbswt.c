@@ -31,19 +31,32 @@
 #define ITERS       2050u
 #define STEP_MS     5u
 
+/* Count a LED transition and latch the knob value at the first edge of
+ * this direction (0xFFFF = not yet seen). */
+static void record_edge(uint16_t knb, uint8_t *edges, uint16_t *first)
+{
+    (*edges)++;
+    if (*first == 0xFFFFu)
+    {
+        *first = knb;
+    }
+}
+
 int main(void)
 {
-    uint16_t min_knb = 0xFFFFu, max_knb = 0u;
-    uint16_t on_edge = 0xFFFFu, off_edge = 0xFFFFu;
-    uint8_t  on_edges = 0u, off_edges = 0u;
+    uint16_t min_knb  = 0xFFFFu;
+    uint16_t max_knb  = 0u;
+    uint16_t on_edge  = 0xFFFFu;
+    uint16_t off_edge = 0xFFFFu;
+    uint8_t  on_edges  = 0u;
+    uint8_t  off_edges = 0u;
     uint8_t  prev = 0xFFu;                 /* 0xFF = no previous sample */
-    uint16_t i;
 
     tk_init();                             /* polled-UART report channel */
     Rte_Init();                            /* BSW init + calibration + ASW init */
     sei();
 
-    for (i = 0u; i < ITERS; i++)
+    for (uint16_t i = 0u; i < ITERS; i++)
     {
         uint16_t knb;
         uint8_t  led;
@@ -57,8 +70,8 @@ int main(void)
 
         if (prev != 0xFFu && led != prev)
         {
-            if (led == 1u) { on_edges++;  if (on_edge  == 0xFFFFu) on_edge  = knb; }
-            else           { off_edges++; if (off_edge == 0xFFFFu) off_edge = knb; }
+            if (led == 1u) record_edge(knb, &on_edges,  &on_edge);
+            else           record_edge(knb, &off_edges, &off_edge);
         }
         prev = led;
 

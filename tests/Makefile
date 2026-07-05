@@ -66,7 +66,8 @@ DRV_model_knbswt := $(RTE)/Rte.c \
 
 # ADC: A0 -> 2500 mV, A1 -> 1100 mV, A2 -> 0 mV (assertions use ordering)
 FLAGS_adc       := --adc 0:2500 --adc 1:1100 --adc 2:0
-FLAGS_spi       := --spi-echo
+# SPI: host slave returns a constant 0x5A on MISO for every transfer.
+FLAGS_spi       := --spi-slave 5A
 # INT0 = PD2: idle high, fall at 1ms, rise at 2ms, fall at 3ms -> 2 falls
 FLAGS_extint    := --pin D,2,500,1 --pin D,2,1000,0 --pin D,2,2000,1 --pin D,2,3000,0
 # ICP1 = PB0: two rising edges 400us apart -> period ~100 ticks (4us/tick)

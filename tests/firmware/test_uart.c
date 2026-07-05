@@ -40,11 +40,11 @@ int main(void)
     {
         UART_Print("EROS-TEST: FAIL tx-dropped\n");
         drain();
-        for (;;) { }
+        for (;;) { /* halt */ }
     }
 
     UART_Print("EROS-TEST: PASS\n");
     drain();
 
-    for (;;) { }
+    for (;;) { /* halt */ }
 }
