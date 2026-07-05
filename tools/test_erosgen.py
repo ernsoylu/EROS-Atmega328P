@@ -251,6 +251,23 @@ def test_bind_compatibility():
     assert "BINDING_MISSING_KEY" in codes(knb, "in", "adc", {})
 
 
+def test_model_rte_goldens():
+    from erosgen import Diagnostics
+    from erosgen.emit.rte import emit_rte_c, emit_rte_cfg_h
+    from erosgen.models import resolve_models
+    d = HERE / "fixtures" / "model_rte"
+    doc = yaml.safe_load((d / "app.yaml").read_text())
+    sink = Diagnostics(strict=False)
+    rms = resolve_models(doc, d, sink)
+    # the appKnbSwt port bindings resolve type-safe: no error diagnostics
+    errs = [x.message for x in sink.items if x.severity == "error"]
+    assert errs == [], errs
+    assert len(rms) == 1
+    rm = rms[0]
+    assert emit_rte_cfg_h(rm, "app.yaml") == (d / "Rte_Cfg.h.golden").read_text()
+    assert emit_rte_c(rm, "app.yaml") == (d / "Rte.c.golden").read_text()
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

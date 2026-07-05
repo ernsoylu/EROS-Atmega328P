@@ -1,0 +1,14 @@
+# Golden fixture for RTE generation (parse/ert.py + bind.py + emit/rte.py).
+# A models: block per rte/README.md, bound to the real appKnbSwt ERT output.
+# Regenerate the .golden files (never hand-edit):
+#   uv run python tools/fixtures/model_rte/regen.py
+models:
+  - name: appKnbSwt
+    codegen_dir: ../../../codegen/appKnbSwt_ert_rtw
+    runnable: appKnbSwt_Runnable
+    rate_ms: 10
+    ports:
+      in:
+        - { signal: IN_KnbVal_Z, driver: adc, channel: 0 }   # A0
+      out:
+        - { signal: OUT_Led1_B, driver: dio, port: B, bit: 5 }  # PB5 / D13

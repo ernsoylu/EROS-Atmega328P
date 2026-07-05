@@ -13,7 +13,7 @@ import difflib
 # aperiodic with no error.
 ALLOWED_KEYS = {
     "doc":        {"system", "sources", "peripherals", "tasks",
-                   "resources", "pool", "gpio", "simulink"},
+                   "resources", "pool", "gpio", "simulink", "models"},
     "system":     {"name", "kernel_dir", "drivers_dir", "tick_hz",
                    "alarm_max_offset", "stack", "hooks", "budget"},
     "stack":      {"canary", "guard_bytes", "paint_margin"},
@@ -27,6 +27,10 @@ ALLOWED_KEYS = {
     "gpio":       {"pin", "dir", "pullup", "name", "init"},
     "simulink":   {"model", "dir", "rate_map"},
     "uart":       {"baud", "tx_ring", "rx_ring"},
+    # RTE generation from a Simulink SWC (see rte/README.md, models: schema).
+    "model":      {"name", "codegen_dir", "init", "runnable", "rate_ms", "ports"},
+    "ports":      {"in", "out"},
+    "port":       {"signal", "driver", "channel", "port", "bit"},
 }
 
 
