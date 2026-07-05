@@ -6,7 +6,7 @@
 # Usage:
 #   ./eros.sh [-check]     verify the AVR toolchain is installed (default)
 #   ./eros.sh -install     install any missing toolchain components
-#   ./eros.sh -build       build both firmwares into ./build (gitignored)
+#   ./eros.sh -build       build the reference demo into ./build (gitignored)
 #   ./eros.sh -clean       remove ./build
 #   ./eros.sh -help
 #
@@ -22,15 +22,21 @@ BUILD_DIR="$SCRIPT_DIR/build"
 MCU=atmega328p
 F_CPU=16000000UL
 
-# Mandated flag set - keep identical to Makefile / comprehensive-demo/Makefile.
+# Mandated flag set - keep identical to reference-demo/Makefile (the same
+# warning-free set + the peripheral geometry from app.yaml).
 CFLAGS=(-Wall -Wextra -Werror -std=c99 -Os -flto
         -ffunction-sections -fdata-sections -fno-common
-        -mmcu="$MCU" -DF_CPU="$F_CPU")
+        -mmcu="$MCU" -DF_CPU="$F_CPU"
+        -DUART_BAUD=9600UL -DUART_TX_SIZE=128u -DUART_RX_SIZE=64u)
 LDFLAGS=(-Wl,--gc-sections)
 
-# Kernel budgets (bytes), mirrored from the Makefile 'budget' target.
+# Budgets (bytes), mirrored from the Makefile. flash/ram bound the
+# app-agnostic KERNEL (non-LTO eros.o+config.o); image_* bound the whole
+# shipped LTO image (avr-size text+data / data+bss).
 FLASH_BUDGET=3072
 RAM_BUDGET=128
+IMAGE_FLASH_BUDGET=4096
+IMAGE_RAM_BUDGET=384
 
 # ----- pretty output (degrades gracefully when not a TTY) ---------------
 if [[ -t 1 ]]; then
@@ -184,7 +190,8 @@ link_hex() {     # link_hex <name> <outdir> <obj...>
     avr-size -B "$outdir/$name.elf" | sed 's/^/     /'
 }
 
-# Non-LTO kernel budget check, mirroring the Makefile 'budget' target.
+# Budget check, mirroring the Makefile: a non-LTO KERNEL check (eros.o +
+# config.o) plus a whole-image gate on the shipped LTO eros.elf.
 budget_check() {
     local bdir="$BUILD_DIR/eros/budget"
     mkdir -p "$bdir"
@@ -204,6 +211,15 @@ budget_check() {
             if (kflash > fb || kram > rb) { print "     BUDGET EXCEEDED"; exit 1 }
             else                          { print "     budgets OK" }
         }'
+    # Whole shipped LTO image (the eros.elf link_hex already produced).
+    avr-size -B "$BUILD_DIR/eros/eros.elf" \
+        | awk -v fb="$IMAGE_FLASH_BUDGET" -v rb="$IMAGE_RAM_BUDGET" '
+        NR==2 {
+            flash = $1 + $2; ram = $2 + $3
+            printf("     whole image  %d / %d B Flash, %d / %d B RAM\n", flash, fb, ram, rb)
+            if (flash > fb || ram > rb) { print "     IMAGE BUDGET EXCEEDED"; exit 1 }
+            else                        { print "     image budgets OK" }
+        }'
 }
 
 do_build() {
@@ -214,35 +230,24 @@ do_build() {
     head1 "Building EROS into ./build"
 
     # --- reference demo -----------------------------------------------
+    # Source list mirrors reference-demo/Makefile APP_SRCS (uart.c/pwm.c
+    # are the peripheral drivers selected in app.yaml).
     local rd="$SCRIPT_DIR/reference-demo"
     local od="$BUILD_DIR/eros"; mkdir -p "$od"
     say "reference demo (eros):"
     local objs=()
     local rs
-    for rs in main.c actuator.c asw_10ms.c asw_50ms.c asw_500ms.c config.c; do
+    for rs in main.c actuator.c asw_signals.c asw_10ms.c asw_50ms.c \
+              asw_100ms.c asw_500ms.c uart.c pwm.c config.c; do
         objs+=("$(compile "$rd/$rs" "$od" "$rd" "$SCRIPT_DIR/kernel")")
     done
     objs+=("$(compile "$SCRIPT_DIR/kernel/eros.c" "$od" "$rd" "$SCRIPT_DIR/kernel")")
     link_hex eros "$od" "${objs[@]}"
     budget_check
 
-    # --- comprehensive demo -------------------------------------------
-    local cd_="$SCRIPT_DIR/comprehensive-demo"
-    local od2="$BUILD_DIR/comprehensive-demo"; mkdir -p "$od2"
-    say "comprehensive demo (demo):"
-    local objs2=()
-    local s
-    for s in main.c asw_signals.c asw_10ms.c asw_50ms.c asw_100ms.c \
-             asw_500ms.c uart.c pwm.c config.c; do
-        objs2+=("$(compile "$cd_/$s" "$od2" "$cd_" "$SCRIPT_DIR/kernel")")
-    done
-    objs2+=("$(compile "$SCRIPT_DIR/kernel/eros.c" "$od2" "$cd_" "$SCRIPT_DIR/kernel")")
-    link_hex demo "$od2" "${objs2[@]}"
-
     echo
     say "${C_G}Build complete.${C_N} Artifacts under ./build (gitignored)."
-    say "Flash with: ${C_B}./eros.sh -flash${C_N}        (reference demo)"
-    say "        or: ${C_B}./eros.sh -flash demo${C_N}   (comprehensive demo)"
+    say "Flash with: ${C_B}./eros.sh -flash${C_N}"
 }
 
 do_clean() {
@@ -279,10 +284,8 @@ do_flash() {
     local target=${1:-eros} hex is_path=0
     case "$target" in
         eros|reference|ref)          hex="$BUILD_DIR/eros/eros.hex" ;;
-        demo|comprehensive|comprehensive-demo)
-                                     hex="$BUILD_DIR/comprehensive-demo/demo.hex" ;;
         *.hex)                       hex="$target"; is_path=1 ;;
-        *) die "unknown flash target '$target' (use: eros | demo | <file.hex>)" ;;
+        *) die "unknown flash target '$target' (use: eros | <file.hex>)" ;;
     esac
     if [[ "$is_path" -eq 0 ]] && [[ ! -f "$hex" ]]; then
         say "firmware not built yet ($hex); building..."
@@ -335,14 +338,15 @@ eros.sh - toolchain helper for EROS (Embedded Realtime Operating System),
 Usage:
   ./eros.sh [-check]         verify the AVR toolchain is installed (default)
   ./eros.sh -install         install any missing toolchain components
-  ./eros.sh -build           build both firmwares into ./build (gitignored)
+  ./eros.sh -build           build the reference demo into ./build (gitignored)
   ./eros.sh -flash [target]  auto-detect the board and flash it
-                             target: eros (default) | demo | <file.hex>
+                             target: eros (default) | <file.hex>
   ./eros.sh -clean           remove ./build
   ./eros.sh -help
 
 The build compiles out-of-tree into ./build (which is gitignored); the
-reference demo also gets the same kernel budget check the Makefile runs.
+reference demo also gets the same kernel + whole-image budget checks the
+Makefile runs.
 
 -flash auto-detects the serial port (/dev/ttyUSB*, /dev/ttyACM*,
 /dev/cu.usb* on macOS) and the bootloader baud (57600 old-bootloader

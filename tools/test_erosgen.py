@@ -32,7 +32,6 @@ def _system_from(path):
 
 DEMOS = [
     (REPO / "reference-demo" / "app.yaml", REPO / "reference-demo"),
-    (REPO / "comprehensive-demo" / "app.yaml", REPO / "comprehensive-demo"),
 ]
 
 
@@ -56,15 +55,17 @@ def test_priority_is_rate_monotonic():
     s = _system_from(REPO / "reference-demo" / "app.yaml")
     prio = {t.name: t.priority for t in s.tasks}
     # autostart lowest, aperiodic next, then faster => higher.
-    assert prio["INIT"] == 0
+    assert prio["STARTUP"] == 0
     assert prio["REPORT"] == 1
-    assert prio["FAST"] > prio["MED"] > prio["SLOW"]
+    assert prio["BUTTON"] > prio["CMD"] > prio["RAMP"] > prio["STATUS"]
 
 
 def test_resource_ceiling_is_highest_user():
     s = _system_from(REPO / "reference-demo" / "app.yaml")
-    res = next(r for r in s.resources if r.name == "DEMO")
-    assert res.ceiling.name == "FAST"  # highest-priority of {FAST, MED}
+    demo = next(r for r in s.resources if r.name == "DEMO")
+    assert demo.ceiling.name == "BUTTON"  # highest-priority of {BUTTON, CMD}
+    uart = next(r for r in s.resources if r.name == "UART")
+    assert uart.ceiling.name == "CMD"     # highest-priority of {STATUS, CMD}
 
 
 def test_wcet_rounds_up_never_under_budget():

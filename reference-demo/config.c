@@ -13,23 +13,26 @@
 
 const OsTaskConfigType OS_taskConfig[OS_NUM_TASKS] PROGMEM =
 {
-    [TASK_INIT] = { Task_Init, 1u /* autostart */, 2u /* WCET ticks */ },
+    [TASK_STARTUP] = { Task_Startup, 1u /* autostart */, 2u /* WCET ticks */ },
     [TASK_REPORT] = { Task_Report, 0u /* autostart */, 1u /* WCET ticks */ },
-    [TASK_SLOW] = { Task_Slow, 0u /* autostart */, 1u /* WCET ticks */ },
-    [TASK_MED] = { Task_Med, 0u /* autostart */, 1u /* WCET ticks */ },
-    [TASK_FAST] = { Task_Fast, 0u /* autostart */, 1u /* WCET ticks */ },
+    [TASK_STATUS] = { Task_Status, 0u /* autostart */, 2u /* WCET ticks */ },
+    [TASK_RAMP] = { Task_Ramp, 0u /* autostart */, 1u /* WCET ticks */ },
+    [TASK_CMD] = { Task_Cmd, 0u /* autostart */, 2u /* WCET ticks */ },
+    [TASK_BUTTON] = { Task_Button, 0u /* autostart */, 1u /* WCET ticks */ },
 };
 
 const OsAlarmConfigType OS_alarmConfig[OS_NUM_ALARMS] PROGMEM =
 {
-    [ALARM_FAST] = { TASK_FAST },
-    [ALARM_MED] = { TASK_MED },
-    [ALARM_SLOW] = { TASK_SLOW },
+    [ALARM_BUTTON] = { TASK_BUTTON },
+    [ALARM_CMD] = { TASK_CMD },
+    [ALARM_RAMP] = { TASK_RAMP },
+    [ALARM_STATUS] = { TASK_STATUS },
 };
 
 const OsResourceConfigType OS_resourceConfig[OS_NUM_RESOURCES] PROGMEM =
 {
-    [RES_DEMO] = { TASK_FAST /* ceiling */, 1u /* mask tick ISR */ },
+    [RES_UART] = { TASK_CMD /* ceiling */, 0u /* mask tick ISR */ },
+    [RES_DEMO] = { TASK_BUTTON /* ceiling */, 1u /* mask tick ISR */ },
 };
 
 uint8_t OS_poolArena[(uint16_t)OS_POOL_NUM_BLOCKS * OS_POOL_BLOCK_SIZE];

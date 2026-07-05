@@ -1,91 +1,85 @@
 /**
  * @file    main.c
- * @brief   EROS demonstration application (Arduino Nano / ATmega328P).
+ * @brief   EROS reference demo (Arduino Nano / ATmega328P) - a full
+ *          application on the EROS OSEK BCC1 kernel (../kernel): GPIO
+ *          scope channels, an interrupt-driven serial console, a Timer1
+ *          PWM breathing LED, pool/mailbox IPC, ChainTask and a
+ *          deliberate error demonstration.
  *
- * Integration layer only: hooks, the one-shot init task and main().
+ * Integration layer only: hooks, the one-shot startup task and main().
  * The application software (ASW) lives in one C/H pair per task rate -
- * the same structure recommended for Simulink / Embedded Coder
- * multitasking output in codegen/README.md:
+ * the structure recommended for Simulink / Embedded Coder multitasking
+ * output in ../codegen/README.md par.4:
  *
- *   asw_10ms.c   TASK_FAST   scope channel PD2 + mailbox consumer
- *   asw_50ms.c   TASK_MED    scope channel PD3 + pool/mailbox producer
- *   asw_500ms.c  TASK_SLOW   scope channel PD4 + ChainTask demo, and
- *                TASK_REPORT the chained 2 s heartbeat (PD5)
- *   asw_ipc.h    the producer->consumer payload protocol + the
- *                concurrency rationale (why no mutexes are needed on
- *                this non-preemptive kernel)
- *   actuator.c/h polymorphic GPIO driver - OOP-in-C, instances and
- *                vtables 100% in Flash (PROGMEM, deviation D4)
+ *   asw_10ms.c    TASK_BUTTON  scope PD3 + debounced button (PD2/D2),
+ *                              IPC producer (pool -> mailbox, RES_DEMO)
+ *   asw_50ms.c    TASK_CMD     scope PD4 + serial parser (ON/OFF/STAT)
+ *                              + button-event consumer (RES_DEMO)
+ *   asw_100ms.c   TASK_RAMP    scope PD5 + Timer1 PWM breathing LED (PB1/D9)
+ *   asw_500ms.c   TASK_STATUS  scope PD6 + status line, and the chained
+ *                              TASK_REPORT 2 s heartbeat (PB5/D13)
+ *   asw_signals.c cross-rate signals ("rate transition" layer) + the
+ *                 shared status print - see asw_signals.h for the
+ *                 concurrency contract (why no mutexes are needed on this
+ *                 non-preemptive kernel, and where they would attach)
+ *   actuator.c    polymorphic GPIO driver (OOP-in-C, vtables + instances
+ *                 in PROGMEM, deviation D4): every scope + heartbeat
+ *                 toggle dispatches through it
  *
- * Demonstrated kernel features:
+ * Hardware (Arduino Nano):
+ *   PB5 / D13 : on-board LED, 2 s heartbeat (TASK_REPORT via ChainTask)
+ *   PB1 / D9  : PWM "breathing" LED, Timer1 @ 1 kHz
+ *   PD2 / D2  : push button to GND, internal pull-up
+ *   PD3..PD6  : scope jitter channels (50 / 10 / 5 / 1 Hz square waves)
+ *   PD0/PD1   : UART 9600 8N1 serial monitor
+ *   Scheduling: EROS alarms - 10 / 50 / 100 / 500 ms
  *
- *  1. Three periodic alarms toggling distinct GPIOs so release jitter can
- *     be measured with a scope (each toggle is a single atomic PINx write):
- *        ALARM_FAST : 10 ms  -> TASK_FAST -> PD2 (Nano pin D2, 50 Hz sq.)
- *        ALARM_MED  : 50 ms  -> TASK_MED  -> PD3 (Nano pin D3, 10 Hz sq.)
- *        ALARM_SLOW : 500 ms -> TASK_SLOW -> PD4 (Nano pin D4,  1 Hz sq.)
- *     Expected jitter: <= 1 tick activation error (alarm fires inside the
- *     tick ISR) + queueing delay bounded by the largest task WCET (<= 1 ms
- *     steady state - see the budget table in config.h).
+ * Serial commands (9600 baud, CR or LF ends a line): ON  resume the ramp,
+ * OFF  stop it and force duty 0, STAT  print a status line now. Pressing
+ * the button toggles the ramp as well - the event travels through a pool
+ * block + the single-slot mailbox (under RES_DEMO) to TASK_CMD.
  *
- *  2. A deliberate double activation in Task_Init: the second
- *     ActivateTask(TASK_REPORT) hits the BCC1 activation limit, returns
- *     E_OS_LIMIT and raises ErrorHook, which toggles the on-board LED
- *     (PB5) ON. PB5 is used by the hooks only, so the LED stays lit as
- *     a visible marker of the demonstrated error until the next error
- *     event (the heartbeat runs on PD5 instead).
- *
- *  3. Producer/consumer IPC: TASK_MED allocates a fixed-size pool block,
- *     fills it, and posts its handle into the single-slot mailbox; the
- *     handoff is guarded by the RES_DEMO IPCP resource (ISR-ceiling
- *     variant). TASK_FAST receives the handle, verifies the payload and
- *     frees the block.
- *
- *  4. ChainTask: every 4th run, TASK_SLOW chains TASK_REPORT (heartbeat
- *     LED toggle every 2 s).
+ * Note the LED toggle idiom: writing a 1 to a PINx bit toggles the pin in
+ * hardware (single atomic store, done here through actuator.c). The
+ * tempting 'PIND |= (1 << PDx)' is a read-modify-write that toggles EVERY
+ * pin of the port currently reading high; 'PINB = (1 << PB5)' is correct.
  */
 
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 
 #include "eros.h"
-#include "actuator.h"
+#include "asw_signals.h"
+#include "asw_500ms.h"
+#include "uart.h"
+#include "pwm.h"
 
-/** Hook-owned actuator: the on-board LED belongs to the hooks only. */
-static const ActuatorType actLed PROGMEM = { &Actuator_OpsPortB,
-                                             (1u << PB5) };
+/* ------------------------------------------------------------------ */
+/* Hooks                                                               */
+/* ------------------------------------------------------------------ */
 
-/* ================================================================== */
-/* Application state (RAM - counted as application, not kernel)        */
-/* ================================================================== */
-
-static volatile StatusType appLastError;   /* written from ISR context   */
-static volatile uint8_t    appErrorCount;
-
-/* ================================================================== */
-/* Hooks (all three enabled in config.h)                               */
-/* ================================================================== */
-
-/** Board init. Called from StartOS() with interrupts still disabled -
- *  GPIO/hardware setup only, no OS service calls. */
+/** Board bring-up; StartOS() calls this with interrupts still disabled. */
 void StartupHook(void)
 {
-    DDRD |= (uint8_t)((1u << PD2) | (1u << PD3) | (1u << PD4) |
-                      (1u << PD5));
-    DDRB |= (uint8_t)(1u << PB5);
+    DDRB  |= (uint8_t)(1u << PB5);                 /* heartbeat LED       */
+    DDRD  |= (uint8_t)((1u << PD3) | (1u << PD4) | /* scope channels...   */
+                       (1u << PD5) | (1u << PD6));
+    DDRD  &= (uint8_t)~(1u << PD2);                /* button input...     */
+    PORTD |= (uint8_t)(1u << PD2);                 /* ...internal pull-up */
+    UART_Init();
+    PWM_Init();
 }
 
-/** Must be ISR-safe: may be raised from the Category-2 tick ISR (e.g. on
- *  a deadline miss). Records the error and pulses the on-board LED. */
+/** May run in tick-ISR context (e.g. a deadline miss). It must therefore
+ *  stay tiny and MUST NOT print: the UART driver's rings are strictly
+ *  single-producer and the producer side belongs to task level.
+ *  Asw_RecordError() is ISR-safe by construction (two byte stores). */
 void ErrorHook(StatusType error)
 {
-    appLastError = error;
-    appErrorCount++;
-    Actuator_Trigger(&actLed);
+    Asw_RecordError(error);
 }
 
-/** Terminal error (e.g. stack canary breach): LED solid ON as a tombstone.
- *  The kernel then parks the MCU in power-down forever. */
+/** Terminal failure tombstone: heartbeat LED solid ON. */
 void ShutdownHook(StatusType error)
 {
     (void)error;
@@ -93,37 +87,49 @@ void ShutdownHook(StatusType error)
     PORTB |= (uint8_t)(1u << PB5);
 }
 
-/* ================================================================== */
-/* Init task (see config.h for the priority map and WCET budgets)      */
-/* ================================================================== */
+/* ------------------------------------------------------------------ */
+/* Startup task                                                        */
+/* ------------------------------------------------------------------ */
 
 /**
- * TASK_INIT - autostart, runs exactly once (lowest priority, WCET <= 2ms).
- * Arms the three periodic alarms and performs the deliberate
- * double-activation ErrorHook demonstration.
+ * TASK_STARTUP - autostart, runs once: banner, reset cause, arm the four
+ * periodic alarms, and perform the deliberate BCC1 activation-limit demo.
  */
-void Task_Init(void)
+void Task_Startup(void)
 {
-    /* Relative alarms: first expiry <increment> ticks from now, then
-     * cyclic. SetAbsAlarm variant shown for the 500 ms channel: at this
-     * point the counter is only a few ticks old, so 500 is still in the
-     * future and fires at absolute tick 500, then every 500 ticks. */
-    (void)SetRelAlarm(ALARM_FAST, 10u, 10u);
-    (void)SetRelAlarm(ALARM_MED,  50u, 50u);
-    (void)SetAbsAlarm(ALARM_SLOW, 500u, 500u);
+    UART_Print_P(PSTR("\r\nEROS reference demo\r\n"));
+    UART_Print_P(PSTR("reset cause MCUSR=0x"));
+    /* WDRF/BORF/EXTRF/PORF. Caveat: meaningful on old-bootloader
+     * (ATmegaBOOT) boards and bare chips; Optiboot clears MCUSR before
+     * jumping to the application, so those boards always report 0x00
+     * (Optiboot stashes the value in r2, which is not standardised). */
+    UART_PrintHex8(os_resetCause);
+    UART_Print_P(PSTR("  commands: ON | OFF | STAT\r\n"));
 
-    /* Deliberate BCC1 activation-limit violation:
-     * the first activation is legal (TASK_REPORT is SUSPENDED), the
-     * second finds it READY -> E_OS_LIMIT -> ErrorHook pulses the LED. */
+    /* Relative alarms fire <increment> ticks from now, then cyclically.
+     * The SetAbsAlarm variant is shown for the 500 ms channel: the
+     * counter is only a few ticks old here, so 500 is still in the future
+     * and it fires at absolute tick 500, then every 500 ticks. */
+    (void)SetRelAlarm(ALARM_BUTTON, 10u,  10u);
+    (void)SetRelAlarm(ALARM_CMD,    50u,  50u);
+    (void)SetRelAlarm(ALARM_RAMP,   100u, 100u);
+    (void)SetAbsAlarm(ALARM_STATUS, 500u, 500u);
+
+    /* Deliberate BCC1 activation-limit violation: the first activation is
+     * legal (TASK_REPORT is SUSPENDED), the second finds it READY - on
+     * this non-preemptive kernel TASK_REPORT cannot run until we return,
+     * so it is still READY -> E_OS_LIMIT -> ErrorHook records it. It
+     * surfaces in the first status line as 'err=1 lastE=..' (PB5 is the
+     * heartbeat, not an error lamp). */
     (void)ActivateTask(TASK_REPORT);   /* E_OK                        */
     (void)ActivateTask(TASK_REPORT);   /* E_OS_LIMIT (intentional)    */
 
     TerminateTask();
 }
 
-/* ================================================================== */
+/* ------------------------------------------------------------------ */
 /* Entry point                                                         */
-/* ================================================================== */
+/* ------------------------------------------------------------------ */
 int main(void)
 {
     StartOS(); /* noreturn: scheduler loop runs forever */

@@ -30,7 +30,10 @@
 #include "eros.h"
 
 /* ------------------------------------------------------------------ */
-/* IPC payload protocol: asw_10ms (producer) -> mailbox -> asw_50ms    */
+/* IPC payload protocol: asw_10ms (producer) -> mailbox -> asw_50ms.    */
+/* The single-byte payload is one event code; the pool block travels    */
+/* through the single-slot mailbox under the RES_DEMO (ISR-ceiling)     */
+/* resource - never through shared globals.                             */
 /* ------------------------------------------------------------------ */
 #define EVT_BUTTON_PRESS  0xB7u
 

@@ -140,7 +140,7 @@ Available drivers and how to bind them:
 - **GPIO** — read `PINx`, write `PORTx` directly in the glue (direction
   and pull-ups configured once in `StartupHook()`). For clean toggles
   use the hardware toggle `PINx = (1<<bit)` (single atomic store).
-- **PWM** — `comprehensive-demo/pwm.c`: Timer1 fast PWM, 1 kHz on
+- **PWM** — `reference-demo/pwm.c`: Timer1 fast PWM, 1 kHz on
   OC1A/PB1 (D9); `PWM_SetDutyPermille(uint16 0..1000)`, true-off at 0.
   OC1B/PB2 (D10) can be added the same way. **Timer2 is the OS tick —
   drivers must never touch it**; Timer0 is still free.
@@ -149,7 +149,7 @@ Available drivers and how to bind them:
   plus Vcc-measurement and raw temperature internal channels.
   `ADC_Init()` from `StartupHook()`, `ADC_Read(ch)` in the glue.
 
-- **UART** — `comprehensive-demo/uart.c` (interrupt-driven,
+- **UART** — `reference-demo/uart.c` (interrupt-driven,
   non-blocking) for telemetry/tuning. Print from a *slow* housekeeping
   task, never from control rates or hooks.
 
@@ -274,8 +274,7 @@ codegen/
     ert_main.c         example main - MUST NOT be compiled (see below)
 ```
 
-Integrating into `comprehensive-demo/Makefile` (same recipe for the
-reference demo — only the relative paths change). The three touch points are
+Integrating into `reference-demo/Makefile`. The three touch points are
 `MODEL_DIR`, `VPATH`/`SRCS`, and `CFLAGS`:
 
 ```make
@@ -320,16 +319,16 @@ SRCS       := main.c uart.c pwm.c config.c eros.c ctrl_glue.c $(MODEL_SRCS)
 ```
 
 - **Budgets**: model + glue objects count as *application* code, so the
-  root `make budget` kernel gate (≤ 3 KiB / ≤ 128 B) is unaffected;
-  watch the whole-image `avr-size` line instead — the model usually
-  dominates flash. `--gc-sections` + `-ffunction-sections` (already in
-  the flags) discard generated functions you never call.
+  `make budget` kernel gate (≤ 3 KiB / ≤ 128 B) is unaffected; the
+  whole-image gate (the `size` target's `image_flash`/`image_ram`) is
+  what a model pushes against — the model usually dominates flash, so
+  raise those limits in `app.yaml`. `--gc-sections` + `-ffunction-sections`
+  (already in the flags) discard generated functions you never call.
 - **`eros.sh`**: the repo-root `./eros.sh -build` / `-flash` helper
-  builds and flashes the two *reference* firmwares (reference demo and
-  comprehensive demo) with fixed source lists — it does **not** pick up
-  model code. Integrate models through the application Makefile as
-  above; extend `eros.sh` only if you want it to build a model firmware
-  too.
+  builds and flashes the reference demo firmware with a fixed source
+  list — it does **not** pick up model code. Integrate models through
+  the application Makefile as above; extend `eros.sh` only if you want
+  it to build a model firmware too.
 
 ## 6. Checklist per integrated model
 

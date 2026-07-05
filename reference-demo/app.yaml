@@ -1,55 +1,75 @@
 # =====================================================================
 # EROS reference demo - system configuration (the "OIL file").
 # Regenerate config.h/config.c/Makefile with:
-#   python3 tools/erosgen.py app.yaml
-# main.c and the asw_*.c rate files are generated once, then owned by
-# you (never overwritten).
+#   python3 ../tools/erosgen.py app.yaml
+# main.c and the asw_*.c rate files are owned by you once generated.
 # =====================================================================
 
 system:
   name: eros
-  kernel_dir: ../kernel       # kernel lives in the repo root's kernel/
+  kernel_dir: ../kernel        # kernel lives in the repo root's kernel/
+  drivers_dir: ../drivers      # where shared peripheral drivers resolve
   tick_hz: 1000
   hooks: { startup: true, error: true, shutdown: true }
-  budget: { flash: 3072, ram: 128, sram_total: 2048 }
+  # Two gates. flash/ram bound the app-agnostic KERNEL (eros.o+config.o,
+  # non-LTO reference build) - unchanged by the peripherals, since the
+  # UART rings/PWM are application RAM. image_flash/image_ram bound the
+  # whole shipped LTO image (avr-size text+data / data+bss).
+  budget: { flash: 3072, ram: 128, sram_total: 2048,
+            image_flash: 4096, image_ram: 384 }
 
-# Sources owned by the application (not peripheral drivers). The ASW is
-# split one file per rate; actuator.c is the shared polymorphic GPIO
-# driver; asw_ipc.h is header-only so it is not listed.
+# Application-owned sources: integration layer, the polymorphic actuator
+# GPIO driver, cross-rate signals and one file per task rate. The uart.c
+# and pwm.c peripheral drivers live in THIS directory (see peripherals)
+# so they resolve locally.
 sources:
   - main.c
   - actuator.c
+  - asw_signals.c
   - asw_10ms.c
   - asw_50ms.c
+  - asw_100ms.c
   - asw_500ms.c
 
-# No hardware peripheral drivers: this demo only toggles GPIOs (via
-# actuator.c) and uses kernel IPC. Nothing else is compiled in.
-peripherals: {}
+# Peripherals actually used. The UART rings are the dominant RAM cost -
+# sized to the 9600-baud wire math (48 B/50 ms), not generously.
+peripherals:
+  uart:
+    baud: 9600
+    tx_ring: 128
+    rx_ring: 64
+  pwm: {}                       # Timer1 breathing LED (OC1A/PB1)
 
 tasks:
-  - name: init
+  - name: startup
     autostart: true
-    wcet_ms: 2                # one-shot: arm alarms + demo activations
-  - name: report             # aperiodic: chained by TASK_SLOW every 4th run
+    wcet_ms: 2                  # one-shot: banner + arm alarms + demo activations
+  - name: report               # aperiodic: chained by TASK_STATUS every 4th run
     wcet_ms: 1
-  - name: slow
+  - name: status
     period_ms: 500
+    wcet_ms: 2
+    runnables: [Asw_Status]
+  - name: ramp
+    period_ms: 100
     wcet_ms: 1
-    runnables: [Asw_Slow]
-  - name: med
+    runnables: [Asw_Ramp]
+  - name: cmd
     period_ms: 50
-    wcet_ms: 1
-    runnables: [Asw_Med]
-  - name: fast
+    wcet_ms: 2
+    runnables: [Asw_Cmd]
+  - name: button
     period_ms: 10
     wcet_ms: 1
-    runnables: [Asw_Fast]
+    runnables: [Asw_Button]
 
 resources:
-  - name: demo               # guards the pool->mailbox handoff
-    users: [fast, med]
-    mask_tick_isr: true       # raise ceiling to ISR level (mask the tick)
+  - name: uart                  # groups the multi-part status line
+    users: [status, cmd]
+    mask_tick_isr: false         # UART ISRs never print; no ISR ceiling
+  - name: demo                  # guards the button pool->mailbox handoff
+    users: [button, cmd]
+    mask_tick_isr: true          # raise ceiling to ISR level (mask the tick)
 
 pool:
   block_size: 8

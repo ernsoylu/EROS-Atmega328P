@@ -2,7 +2,7 @@
 
 App-agnostic, kernel-independent drivers (pure avr-libc + registers, no
 `eros.h`, no `config.h`) completing the peripheral coverage started by
-`comprehensive-demo/uart.c` (USART0) and `comprehensive-demo/pwm.c`
+`reference-demo/uart.c` (USART0) and `reference-demo/pwm.c`
 (Timer1 PWM). Every ISR here is OSEK **Category 1** — it only counts,
 timestamps or moves bytes and never calls an OS service; tasks poll
 with atomic fetch functions. Blocking calls are hardware-bounded or
@@ -21,22 +21,22 @@ timeout-capped so each has a documented WCET for the task budget table.
 
 Deliberately **not** drivers: Timer2 (kernel tick — untouchable),
 watchdog & sleep (kernel supervision/idle policy), USART0 (exists in
-`comprehensive-demo/uart.c`), USART-MSPIM (niche — only useful when
+`reference-demo/uart.c`), USART-MSPIM (niche — only useful when
 hardware SPI is occupied), debugWIRE/SPM self-programming (out of
 scope for application firmware).
 
 ## Resource conflicts — read before combining
 
-- `icp` **xor** `comprehensive-demo/pwm.c`: both own Timer1. Never
+- `icp` **xor** `reference-demo/pwm.c`: both own Timer1. Never
   initialise both.
-- `spi` claims PB5/D13 (SCK) — the on-board LED. Both demos use PB5 in
-  their hooks: move that indicator before enabling SPI.
+- `spi` claims PB5/D13 (SCK) — the on-board LED. The demo uses PB5 as
+  the heartbeat / hook indicator: move it before enabling SPI.
 - `timer0_pwm` (OC0A/PD6) conflicts with `acomp` in `ACOMP_IN_AIN0`
   mode (AIN0 = PD6); with the bandgap positive input they coexist.
-- `i2c` costs A4/A5 as ADC channels; `timer0_pwm` costs D5 (root
-  demo's heartbeat) and D6.
-- INT0/INT1 = D2/D3 are used as plain GPIOs by the demos (button,
-  scope channels) — polling and `extint` on the same pin both work,
+- `i2c` costs A4/A5 as ADC channels; `timer0_pwm` costs D5 and D6 (the
+  demo's 5 Hz / 1 Hz scope channels).
+- INT0/INT1 = D2/D3 are used as plain GPIOs by the demo (button on D2,
+  scope channel on D3) — polling and `extint` on the same pin both work,
   just be deliberate about who owns the pin.
 
 ## Using a driver in an application

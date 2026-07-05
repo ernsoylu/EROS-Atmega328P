@@ -11,7 +11,7 @@ TARGET  := eros
 
 VPATH   := ../kernel
 
-APP_SRCS := main.c actuator.c asw_10ms.c asw_50ms.c asw_500ms.c
+APP_SRCS := main.c actuator.c asw_signals.c asw_10ms.c asw_50ms.c asw_100ms.c asw_500ms.c pwm.c uart.c
 SRCS     := $(APP_SRCS) eros.c config.c
 OBJS     := $(SRCS:.c=.o)
 DEPS     := $(SRCS:.c=.d)
@@ -24,9 +24,11 @@ AVRDUDE := avrdude
 PORT    ?= /dev/ttyUSB0
 BAUD    ?= 57600          # old-bootloader Nano; Optiboot: 115200
 
+# Peripheral geometry from app.yaml (overrides driver defaults)
+PERIPH_DEFS := -DUART_BAUD=9600UL -DUART_TX_SIZE=128u -DUART_RX_SIZE=64u
 CFLAGS  := -Wall -Wextra -Werror -std=c99 -Os -flto \
            -ffunction-sections -fdata-sections -fno-common \
-           -mmcu=$(MCU) -DF_CPU=$(F_CPU) \
+           -mmcu=$(MCU) -DF_CPU=$(F_CPU) $(PERIPH_DEFS) \
            -I. -I../kernel
 LDFLAGS := -Wl,--gc-sections -Wl,-Map=$(TARGET).map
 
@@ -35,6 +37,8 @@ CFLAGS_NOLTO  := $(filter-out -flto,$(CFLAGS))
 FLASH_BUDGET  := 3072
 RAM_BUDGET    := 128
 SRAM_TOTAL    := 2048
+IMAGE_FLASH_BUDGET := 4096
+IMAGE_RAM_BUDGET   := 384
 
 .PHONY: all size budget flash clean config
 
@@ -52,6 +56,15 @@ $(TARGET).hex: $(TARGET).elf
 size: $(TARGET).elf
 	@echo "---- final image (LTO) --------------------------------------"
 	@$(SIZE) -B $(TARGET).elf
+	@$(SIZE) -B $(TARGET).elf | awk ' \
+	  NR==2 { flash = $$1 + $$2; ram = $$2 + $$3; \
+	    printf("whole image : %d / %d B Flash, %d / %d B RAM\n", \
+	           flash, $(IMAGE_FLASH_BUDGET), ram, $(IMAGE_RAM_BUDGET)); \
+	    if (flash > $(IMAGE_FLASH_BUDGET) || ram > $(IMAGE_RAM_BUDGET)) { \
+	      printf("IMAGE BUDGET EXCEEDED\n"); exit 1; \
+	    } else { \
+	      printf("image budgets OK\n"); \
+	    } }'
 
 $(BUDGET_DIR):
 	mkdir -p $(BUDGET_DIR)

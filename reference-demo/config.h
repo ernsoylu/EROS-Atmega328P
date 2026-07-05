@@ -18,41 +18,47 @@
 
 /* ---- tasks: TaskID == priority == ready-mask bit ----------------- */
 /* WCET budgets (ticks, monitored at +/-1 tick):                      */
-/*   TASK_INIT       prio 0  wcet <= 2 tick(s)  (autostart, one-shot) */
+/*   TASK_STARTUP    prio 0  wcet <= 2 tick(s)  (autostart, one-shot) */
 /*   TASK_REPORT     prio 1  wcet <= 1 tick(s)  (activated/chained) */
-/*   TASK_SLOW       prio 2  wcet <= 1 tick(s)  (500 ms) */
-/*   TASK_MED        prio 3  wcet <= 1 tick(s)  (50 ms) */
-/*   TASK_FAST       prio 4  wcet <= 1 tick(s)  (10 ms) */
-#define OS_NUM_TASKS          5u
+/*   TASK_STATUS     prio 2  wcet <= 2 tick(s)  (500 ms) */
+/*   TASK_RAMP       prio 3  wcet <= 1 tick(s)  (100 ms) */
+/*   TASK_CMD        prio 4  wcet <= 2 tick(s)  (50 ms) */
+/*   TASK_BUTTON     prio 5  wcet <= 1 tick(s)  (10 ms) */
+#define OS_NUM_TASKS          6u
 
-#define TASK_INIT             ((TaskType)0u)
+#define TASK_STARTUP          ((TaskType)0u)
 #define TASK_REPORT           ((TaskType)1u)
-#define TASK_SLOW             ((TaskType)2u)
-#define TASK_MED              ((TaskType)3u)
-#define TASK_FAST             ((TaskType)4u)
+#define TASK_STATUS           ((TaskType)2u)
+#define TASK_RAMP             ((TaskType)3u)
+#define TASK_CMD              ((TaskType)4u)
+#define TASK_BUTTON           ((TaskType)5u)
 
-extern void Task_Init(void);
+extern void Task_Startup(void);
 extern void Task_Report(void);
-extern void Task_Slow(void);
-extern void Task_Med(void);
-extern void Task_Fast(void);
+extern void Task_Status(void);
+extern void Task_Ramp(void);
+extern void Task_Cmd(void);
+extern void Task_Button(void);
 
 /* ---- alarms: one cyclic alarm per periodic task ------------------ */
-#define OS_NUM_ALARMS         3u
+#define OS_NUM_ALARMS         4u
 
-#define ALARM_FAST            ((AlarmType)0u) /* 10 ms -> TASK_FAST */
-#define ALARM_MED             ((AlarmType)1u) /* 50 ms -> TASK_MED */
-#define ALARM_SLOW            ((AlarmType)2u) /* 500 ms -> TASK_SLOW */
+#define ALARM_BUTTON          ((AlarmType)0u) /* 10 ms -> TASK_BUTTON */
+#define ALARM_CMD             ((AlarmType)1u) /* 50 ms -> TASK_CMD */
+#define ALARM_RAMP            ((AlarmType)2u) /* 100 ms -> TASK_RAMP */
+#define ALARM_STATUS          ((AlarmType)3u) /* 500 ms -> TASK_STATUS */
 
 /* Period macros for SetRelAlarm/SetAbsAlarm calls in the app. */
-#define TASK_FAST_PERIOD_TICKS 10u
-#define TASK_MED_PERIOD_TICKS 50u
-#define TASK_SLOW_PERIOD_TICKS 500u
+#define TASK_BUTTON_PERIOD_TICKS 10u
+#define TASK_CMD_PERIOD_TICKS 50u
+#define TASK_RAMP_PERIOD_TICKS 100u
+#define TASK_STATUS_PERIOD_TICKS 500u
 
 /* ---- resources (IPCP; ceiling = highest-priority user) ---------- */
-#define OS_NUM_RESOURCES      1u
+#define OS_NUM_RESOURCES      2u
 
-#define RES_DEMO              ((ResourceType)0u) /* users: FAST, MED */
+#define RES_UART              ((ResourceType)0u) /* users: STATUS, CMD */
+#define RES_DEMO              ((ResourceType)1u) /* users: BUTTON, CMD */
 
 /* ---- fixed-block pool -------------------------------------------- */
 #define OS_POOL_BLOCK_SIZE    8u
@@ -60,7 +66,7 @@ extern void Task_Fast(void);
 
 /* ---- watchdog aliveness ------------------------------------------ */
 #define OS_ALIVE_REQUIRED_MASK \
-    ((uint8_t)((1u << TASK_FAST) | (1u << TASK_MED) | (1u << TASK_SLOW)))
+    ((uint8_t)((1u << TASK_BUTTON) | (1u << TASK_CMD) | (1u << TASK_RAMP) | (1u << TASK_STATUS)))
 
 /* ---- hooks -------------------------------------------------------- */
 #define OS_CFG_STARTUPHOOK    1
@@ -77,16 +83,16 @@ OS_STATIC_ASSERT(OS_NUM_TASKS >= 1u, "at least one task required");
 OS_STATIC_ASSERT(OS_NUM_TASKS <= 8u, "ready queue is an 8-bit mask: max 8 tasks");
 
 OS_STATIC_ASSERT(
-    ((1u << TASK_INIT) | (1u << TASK_REPORT) | (1u << TASK_SLOW) | (1u << TASK_MED) | (1u << TASK_FAST)) ==
+    ((1u << TASK_STARTUP) | (1u << TASK_REPORT) | (1u << TASK_STATUS) | (1u << TASK_RAMP) | (1u << TASK_CMD) | (1u << TASK_BUTTON)) ==
     ((1u << OS_NUM_TASKS) - 1u),
     "task IDs/priorities must be unique bit positions 0..OS_NUM_TASKS-1");
 
 OS_STATIC_ASSERT(OS_NUM_ALARMS >= 1u, "at least one alarm required");
-OS_STATIC_ASSERT((ALARM_FAST < OS_NUM_ALARMS) && (ALARM_MED < OS_NUM_ALARMS) && (ALARM_SLOW < OS_NUM_ALARMS),
+OS_STATIC_ASSERT((ALARM_BUTTON < OS_NUM_ALARMS) && (ALARM_CMD < OS_NUM_ALARMS) && (ALARM_RAMP < OS_NUM_ALARMS) && (ALARM_STATUS < OS_NUM_ALARMS),
                  "alarm ID out of range");
 
 OS_STATIC_ASSERT(OS_NUM_RESOURCES <= 8u, "resource held-mask is 8-bit");
-OS_STATIC_ASSERT((RES_DEMO < OS_NUM_RESOURCES),
+OS_STATIC_ASSERT((RES_UART < OS_NUM_RESOURCES) && (RES_DEMO < OS_NUM_RESOURCES),
                  "resource ID out of range");
 
 OS_STATIC_ASSERT((OS_POOL_NUM_BLOCKS >= 1u) && (OS_POOL_NUM_BLOCKS <= 8u),

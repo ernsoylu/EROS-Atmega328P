@@ -24,7 +24,7 @@ F_CPU       := 16000000UL
 
 ROOT        := ..
 DRIVERS     := $(ROOT)/drivers
-CDEMO       := $(ROOT)/comprehensive-demo
+REFDEMO     := $(ROOT)/reference-demo
 CODEGEN     := $(ROOT)/codegen
 MODEL_RTW   := $(CODEGEN)/appKnbSwt_ert_rtw
 RTE         := $(ROOT)/rte
@@ -33,7 +33,7 @@ BUILD       := build
 AVR_CFLAGS  := -Wall -Wextra -std=gnu99 -Os -g \
                -mmcu=$(MCU) -DF_CPU=$(F_CPU) \
                -ffunction-sections -fdata-sections \
-               -I common -I $(DRIVERS) -I $(CDEMO) \
+               -I common -I $(DRIVERS) -I $(REFDEMO) \
                -I $(RTE) -I $(MODEL_RTW)
 AVR_LDFLAGS := -Wl,--gc-sections
 
@@ -47,7 +47,7 @@ RUNNER      := $(BUILD)/runtest
 # Pure-firmware tests need no host stimulus; stimulus tests inject
 # ADC voltages / SPI echo / GPIO edges from the host side.
 
-DRV_uart        := $(CDEMO)/uart.c
+DRV_uart        := $(REFDEMO)/uart.c
 DRV_eeprom      := $(DRIVERS)/eeprom.c
 DRV_timer0_pwm  := $(DRIVERS)/timer0_pwm.c
 DRV_adc         := $(DRIVERS)/adc.c

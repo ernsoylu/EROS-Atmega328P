@@ -8,20 +8,25 @@ kernel implementing the OSEK/VDX BCC1
 no Arduino framework, no heap, no runtime object creation. Just
 `avr-gcc`, `<avr/io.h>` and the datasheet.
 
-Measured with avr-gcc 7.3 (`-Os`, non-LTO reference build — the shipped
-`-flto` image is smaller):
+Measured with avr-gcc 7.3 (`-Os`). The kernel rows are the non-LTO
+reference build (stable, `--gc-sections`-independent); the whole-image row
+is the shipped `-flto` + `--gc-sections` image:
 
 | Budget | Limit | Measured |
 |---|---|---|
-| Kernel Flash (`eros.o` + `config.o`) | ≤ 3072 B | **1945 B** |
-| Kernel static RAM (`eros.o`) | ≤ 128 B | **35 B** |
+| Kernel Flash (`eros.o` + `config.o`) | ≤ 3072 B | **2000 B** |
+| Kernel static RAM (`eros.o`) | ≤ 128 B | **42 B** |
 | Pool arena (user payload, reported separately) | — | 32 B |
-| Demo application RAM (all ASW objects) | — | 6 B |
-| Stack + idle RAM (reported separately) | — | 1975 B |
-| Whole demo image (LTO + `--gc-sections`) | — | 2132 B Flash / 72 B RAM |
+| Application RAM (UART rings + all ASW objects) | — | ~221 B |
+| Whole demo image (LTO + `--gc-sections`), **gated** | ≤ 4096 B / ≤ 384 B | **3566 B Flash / 295 B RAM** |
+| Stack + idle RAM (reported separately) | — | 1753 B |
 
 `make -C reference-demo` builds, prints `avr-size` output and **fails the
-build** if a budget is exceeded (`make -C reference-demo budget`).
+build** if a budget is exceeded — two gates: the app-agnostic kernel by the
+non-LTO `budget` target (`make -C reference-demo budget`), and the whole
+shipped LTO image by the `size` target (`image_flash`/`image_ram` in
+`app.yaml`). UART rings and PWM are *application* RAM, so they never move
+the tiny kernel figure.
 
 ## Layout
 
@@ -32,23 +37,23 @@ kernel/               app-agnostic kernel, reused by every application
   eros.h           public API + doc comments (semantics, error codes)
   eros.c           scheduler, tick ISR, alarms, resources, mailbox,
                       pool, stack canary, watchdog, .init3 WDT fix
-reference-demo/       the primary reference application (parallels
-                      comprehensive-demo/): `make -C reference-demo`
+reference-demo/       the full reference application on the kernel:
+                      `make -C reference-demo` — see its README.md
   app.yaml         its configuration ("OIL file"); the config.*/Makefile
                       below are generated from it by tools/erosgen.py
   config.h/.c      generated static config: tasks, priorities, alarms,
                       resources, pool geometry, hooks, aliveness mask
-  main.c           integration layer: hooks + one-shot init task + main()
-  asw_10ms.c/.h    TASK_FAST — scope channel PD2 + mailbox consumer
-  asw_50ms.c/.h    TASK_MED — scope channel PD3 + pool/mailbox producer
-  asw_500ms.c/.h   TASK_SLOW (PD4, ChainTask) + chained TASK_REPORT (PD5)
-  asw_ipc.h        producer→consumer payload protocol + concurrency notes
+  main.c           integration layer: hooks + one-shot startup task + main()
+  asw_10ms.c/.h    TASK_BUTTON — scope PD3 + debounced button, IPC producer
+  asw_50ms.c/.h    TASK_CMD — scope PD4 + serial console + IPC consumer
+  asw_100ms.c/.h   TASK_RAMP — scope PD5 + Timer1 PWM breathing LED
+  asw_500ms.c/.h   TASK_STATUS — scope PD6 + status line + chained
+                      TASK_REPORT heartbeat (PB5)
+  asw_signals.c/.h cross-rate "rate transition" layer + status print
   actuator.c/.h    polymorphic GPIO driver (OOP-in-C, vtables in PROGMEM)
+  uart.c/.h        interrupt-driven USART0 console (ring buffers)
+  pwm.c/.h         Timer1 fast-PWM breathing LED (OC1A/PB1)
   Makefile         generated: warning-free flags, size/budget, flash target
-comprehensive-demo/   a second, bigger application on the same kernel:
-                      interrupt-driven serial console (ON/OFF/STAT),
-                      debounced button, Timer1 PWM breathing LED,
-                      pool+mailbox IPC — see its README.md
 drivers/              app-agnostic drivers completing the ATmega328P
                       peripheral coverage: ADC, EEPROM, I2C, SPI,
                       INT/PCINT, Timer0 PWM, Timer1 input capture,
@@ -75,17 +80,16 @@ tests/                simavr simulation tests: on-chip self-checks +
 
 The kernel directory never contains a `config.h`; each application
 provides its own and compiles the kernel sources against it (`-I.`
-first) — the OSEK "one kernel, per-app static config" model. The
-`comprehensive-demo/` application reuses the kernel unchanged with a
-completely different task set.
+first) — the OSEK "one kernel, per-app static config" model. Any number of
+applications can reuse the kernel unchanged, each with its own task set.
 
 That per-app `config.h`/`config.c`/`Makefile` are **generated from a
 single `app.yaml`** by `tools/erosgen.py` (the OIL compiler): it picks
 which peripheral drivers compile, sizes the RAM-dominant buffers (UART
 rings, pool arena), assigns rate-monotonic priorities, and enforces
 schedulability and pin/peripheral-conflict rules — an invalid system
-cannot be generated. Both shipped demos regenerate to byte-identical
-images from their `app.yaml`. See `tools/README.md`.
+cannot be generated. The shipped demo regenerates to a byte-identical
+image from its `app.yaml`. See `tools/README.md`.
 
 ## Architecture in one page
 
@@ -144,42 +148,48 @@ images from their `app.yaml`. See `tools/README.md`.
 
 ## Reference demo
 
-| Task | Prio | Period | Pin | Purpose |
+One firmware exercising the whole kernel plus the two peripheral drivers
+(`uart.c`, `pwm.c`). See `reference-demo/README.md` for the wiring and
+serial protocol.
+
+| Task | Prio | Release | Pins | Purpose |
 |---|---|---|---|---|
-| `Task_Fast` | 4 (highest) | 10 ms | PD2/D2 | scope jitter channel; mailbox consumer |
-| `Task_Med` | 3 | 50 ms | PD3/D3 | scope channel; pool producer via mailbox under `RES_DEMO` |
-| `Task_Slow` | 2 | 500 ms | PD4/D4 | scope channel; `ChainTask(TASK_REPORT)` every 4th run |
-| `Task_Report` | 1 | chained | PD5/D5 | heartbeat (toggles every 2 s) |
-| `Task_Init` | 0 | once (autostart) | — | arms alarms; deliberate double `ActivateTask` → `E_OS_LIMIT` → `ErrorHook` |
+| `Task_Button` | 5 (highest) | 10 ms | PD3 scope, PD2 in | scope channel; debounced button; IPC producer under `RES_DEMO` |
+| `Task_Cmd` | 4 | 50 ms | PD4 scope, UART | scope channel; serial console (`ON`/`OFF`/`STAT`); button-event consumer under `RES_DEMO` |
+| `Task_Ramp` | 3 | 100 ms | PD5 scope, PB1 PWM | scope channel; Timer1 PWM breathing LED |
+| `Task_Status` | 2 | 500 ms | PD6 scope, UART | scope channel; status line under `RES_UART`; `ChainTask(TASK_REPORT)` every 4th run |
+| `Task_Report` | 1 | chained | PB5/D13 | heartbeat (toggles every 2 s) |
+| `Task_Startup` | 0 | once (autostart) | UART | banner + reset cause + arms alarms; deliberate double `ActivateTask` → `E_OS_LIMIT` → `ErrorHook` |
 
-Put a scope on D2/D3/D4: you get 50/10/1 Hz square waves whose edge
-jitter is bounded by ≤ 1 tick activation error + the longest task WCET
-(≤ 1 ms steady-state). The on-board LED (PB5/D13) belongs exclusively
-to the hooks: it turns ON right after boot — that is the *intentional*
-double-activation error arriving in `ErrorHook` — and stays lit as a
-visible marker (solid ON from `ShutdownHook` would signal a terminal
-fault instead).
+Put a scope on D3/D4/D5/D6: you get 50/10/5/1 Hz square waves (one per
+rate) whose edge jitter is bounded by ≤ 1 tick activation error + the
+longest task WCET (≤ 2 ms steady-state); each toggle is a single atomic
+`PINx` write dispatched through the polymorphic actuator. The on-board LED
+(PB5/D13) is the 2 s heartbeat (chained `Task_Report`); solid ON from
+`ShutdownHook` marks a terminal fault. The deliberate boot-time
+double-activation raises `E_OS_LIMIT` in `ErrorHook`, which the first
+serial status line reports as `err=1 lastE=..` — PB5 stays a heartbeat,
+not an error lamp.
 
-Verified in simavr (10 simulated seconds): PD2/PD3/PD4 toggle exactly
-1000/200/20 times with the steady-state period accurate to the cycle,
-PD5 beats 6 times, PB5 toggles exactly once at boot, and a dedicated
-test confirmed `SetAbsAlarm` with a passed start value expires exactly
-one counter wraparound later (tick 65536 + start), including the
-start == now equality edge.
+The 500 ms alarm is armed with `SetAbsAlarm` (the others with
+`SetRelAlarm`) to exercise the absolute-alarm path. CI builds the image
+warning-free with both budget gates enforced and boots it under
+`qemu-system-avr` for 3 s of guest time (the smoke job); the peripheral
+drivers it links (`uart.c`) are separately proven in the simavr matrix.
 
 ## ASW structure & shared data (why there are no mutexes)
 
-Both applications follow the structure recommended for
-Simulink/Embedded Coder output in `codegen/README.md` §4: **one C/H
-pair per task rate** (`asw_10ms.c`, `asw_50ms.c`, …), a thin
-integration `main.c` (hooks + init task only), and *no* application
-state shared between rate files through ad-hoc globals. Data crosses a
-rate boundary in exactly two sanctioned ways:
+The demo follows the structure recommended for Simulink/Embedded Coder
+output in `codegen/README.md` §4: **one C/H pair per task rate**
+(`asw_10ms.c`, `asw_50ms.c`, …), a thin integration `main.c` (hooks +
+startup task only), and *no* application state shared between rate files
+through ad-hoc globals. Data crosses a rate boundary in exactly two
+sanctioned ways:
 
 1. **Kernel IPC** — pool block + single-slot mailbox, wrapped in a
-   `GetResource`/`ReleaseResource` pair marking the handoff as one
-   logical unit (reference demo, `asw_ipc.h`).
-2. **A signals module** — `comprehensive-demo/asw_signals.c/.h`, the
+   `GetResource`/`ReleaseResource` pair (`RES_DEMO`) marking the handoff
+   as one logical unit (button press → command task).
+2. **A signals module** — `reference-demo/asw_signals.c/.h`, the
    hand-written equivalent of Simulink's Rate Transition layer: every
    cross-rate signal is accessed only through its accessor functions.
 
@@ -211,9 +221,8 @@ flash:
 ```sh
 ./eros.sh              # check the AVR toolchain is installed
 ./eros.sh -install     # install anything missing (apt/dnf/pacman/brew/…)
-./eros.sh -build       # build both firmwares into ./build (gitignored)
-./eros.sh -flash       # auto-detect the board + baud, flash reference demo
-./eros.sh -flash demo  # flash the comprehensive demo instead
+./eros.sh -build       # build the reference demo into ./build (gitignored)
+./eros.sh -flash       # auto-detect the board + baud, then flash
 ```
 
 `-flash` finds the serial port (`/dev/ttyUSB*`, `/dev/ttyACM*`,
@@ -227,8 +236,6 @@ Or drive the Makefiles directly:
 make -C reference-demo         # build + size + budget check (fails if over budget)
 make -C reference-demo flash   # avrdude, old-bootloader Nano (57600 baud)
 make -C reference-demo flash BAUD=115200 PORT=/dev/ttyACM0   # Optiboot boards
-
-make -C comprehensive-demo     # the second application
 ```
 
 Mandated flags (warning-free): `-Wall -Wextra -Werror -std=c99 -Os
@@ -260,9 +267,9 @@ Because **Renode has no AVR core**, the firmware is executed under
 **simavr** (the AVR-native simulator) in CI. `.github/workflows/ci.yml`
 runs three jobs on every push/PR:
 
-1. **build** — erosgen unit tests, reference demo + memory-budget gate,
-   comprehensive-demo, and `-Werror` compile gates for the drivers and
-   the generated model + RTE.
+1. **build** — erosgen unit tests, reference demo + kernel/whole-image
+   budget gates, and `-Werror` compile gates for the drivers and the
+   generated model + RTE.
 2. **sim** — builds self-checking test firmware and a `libsimavr` host
    runner (`tests/`) that injects stimulus (ADC voltages/ramps, GPIO
    edges, SPI loopback) and reads a UART `PASS/FAIL` sentinel. Covers

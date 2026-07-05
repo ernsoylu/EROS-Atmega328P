@@ -35,9 +35,6 @@ jobs:
       - name: Build reference demo + memory budget
         run: make -C reference-demo all
 
-      - name: Build comprehensive-demo
-        run: make -C comprehensive-demo
-
       - name: Driver compile gate (-Werror, all peripherals)
         run: make -C drivers
 
@@ -97,15 +94,13 @@ jobs:
           sudo apt-get install -y gcc-avr avr-libc binutils-avr qemu-system-misc
 
       - name: Build firmware
-        run: |
-          make -C reference-demo all
-          make -C comprehensive-demo
+        run: make -C reference-demo all
 
       - name: Boot smoke (survives 3s of guest time without crashing)
         run: |
           set +e
           timeout 3 qemu-system-avr -machine uno -nographic \
-            -serial null -bios comprehensive-demo/*.elf
+            -serial null -bios reference-demo/*.elf
           rc=$?
           # timeout(1) returns 124 when it had to kill a still-running
           # guest - that is exactly what "it booted and kept running"

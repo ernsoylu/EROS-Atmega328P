@@ -5,7 +5,7 @@
  * Pins: OC0A = PD6/D6, OC0B = PD5/D5. Fast PWM mode 3 (TOP = 0xFF),
  * prescaler /64: f = 16 MHz / (64 * 256) = 976.6 Hz, duty 0..255.
  *
- * This complements the 16-bit Timer1 driver (comprehensive-demo/pwm.c,
+ * This complements the 16-bit Timer1 driver (reference-demo/pwm.c,
  * 1 kHz, permille resolution). Timer2 would offer two more channels
  * but is the EROS kernel tick and MUST NOT be touched by drivers.
  *

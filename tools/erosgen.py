@@ -90,7 +90,8 @@ ALLOWED_KEYS = {
                    "alarm_max_offset", "stack", "hooks", "budget"},
     "stack":      {"canary", "guard_bytes", "paint_margin"},
     "hooks":      {"startup", "error", "shutdown"},
-    "budget":     {"flash", "ram", "sram_total"},
+    "budget":     {"flash", "ram", "sram_total",
+                   "image_flash", "image_ram"},
     "task":       {"name", "entry", "period_ms", "wcet_ms", "autostart",
                    "watchdog", "runnables"},
     "resource":   {"name", "users", "mask_tick_isr"},
@@ -604,7 +605,7 @@ def emit_makefile(s, app_dir):
     local_drv, ext_drv = driver_sources(s, app_dir)
     # Auto-include the generated per-rate ASW files so a fresh project
     # builds without hand-editing sources; dedup against any the user
-    # listed explicitly (the reference demos list them for readability).
+    # listed explicitly (the reference demo lists them for readability).
     asw_files = [f"asw_{t.period_ms}ms.c" for t in s.periodic]
     app_srcs = list(s.sources)
     for f in asw_files + local_drv:
@@ -630,6 +631,13 @@ def emit_makefile(s, app_dir):
         incs.append(f"-I{mdir} -I$(MODEL_DIR)")
 
     defs = periph_defines(s)
+
+    # Whole-image budget gate (real LTO elf, in the size target). The
+    # kernel budget below stays a separate, non-LTO check: UART/PWM rings
+    # are application RAM and never touch eros.o/config.o.
+    image_flash = s.budget.get("image_flash") if s.budget else None
+    image_ram = s.budget.get("image_ram") if s.budget else None
+    has_image_gate = image_flash is not None and image_ram is not None
 
     L = []
     L.append("# =====================================================================")
@@ -680,6 +688,9 @@ def emit_makefile(s, app_dir):
         L.append(f"FLASH_BUDGET  := {int(s.budget.get('flash', 3072))}")
         L.append(f"RAM_BUDGET    := {int(s.budget.get('ram', 128))}")
         L.append(f"SRAM_TOTAL    := {int(s.budget.get('sram_total', 2048))}")
+        if has_image_gate:
+            L.append(f"IMAGE_FLASH_BUDGET := {int(image_flash)}")
+            L.append(f"IMAGE_RAM_BUDGET   := {int(image_ram)}")
         L.append("")
         L.append(".PHONY: all size budget flash clean config")
         L.append("")
@@ -701,6 +712,16 @@ def emit_makefile(s, app_dir):
     L.append("size: $(TARGET).elf")
     L.append('\t@echo "---- final image (LTO) --------------------------------------"')
     L.append("\t@$(SIZE) -B $(TARGET).elf")
+    if has_image_gate:
+        L.append("\t@$(SIZE) -B $(TARGET).elf | awk ' \\")
+        L.append("\t  NR==2 { flash = $$1 + $$2; ram = $$2 + $$3; \\")
+        L.append('\t    printf("whole image : %d / %d B Flash, %d / %d B RAM\\n", \\')
+        L.append("\t           flash, $(IMAGE_FLASH_BUDGET), ram, $(IMAGE_RAM_BUDGET)); \\")
+        L.append("\t    if (flash > $(IMAGE_FLASH_BUDGET) || ram > $(IMAGE_RAM_BUDGET)) { \\")
+        L.append('\t      printf("IMAGE BUDGET EXCEEDED\\n"); exit 1; \\')
+        L.append("\t    } else { \\")
+        L.append('\t      printf("image budgets OK\\n"); \\')
+        L.append("\t    } }'")
     L.append("")
     if s.budget:
         L.append("$(BUDGET_DIR):")
@@ -1013,7 +1034,7 @@ def main(argv):
         # os_gen.h (pin + alarm glue) is refreshed only for apps that use
         # it: a freshly generated main.c includes it, and any main.c that
         # references it keeps getting refreshed. Hand-written mains that
-        # manage their own startup (the reference demos) are left alone.
+        # manage their own startup (the reference demo) are left alone.
         main_path = app_dir / MAIN_C
         uses_os_gen = (not main_path.exists()) or \
             ("os_gen.h" in main_path.read_text())

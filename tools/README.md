@@ -31,8 +31,8 @@ Two independent levers, both driven from the YAML:
 2. **Buffer geometry is explicit.** UART TX/RX rings and the memory-pool
    arena are the dominant application RAM. The YAML sets them and the
    generator emits `-DUART_TX_SIZE=…` etc.; shrinking the TX ring from
-   128→32 B on the comprehensive demo drops static RAM by 96 B (287→191 B
-   `.bss`) with no code change.
+   128→32 B on the reference demo drops static RAM by 96 B (295→199 B)
+   with no code change.
 
 The end-of-run report prints the static-RAM plan (kernel, arena, rings)
 so "too much RAM" is a number you see *before* flashing.
@@ -54,7 +54,7 @@ edit the YAML and regenerate, never edit them directly.
 
 \* `os_gen.h` is (re)written only for apps whose `main.c` includes it —
 a freshly generated `main.c` does. Hand-written mains that manage their
-own startup (the two reference demos) are left untouched, so `os_gen.h`
+own startup (the reference demo) are left untouched, so `os_gen.h`
 never appears in them.
 
 **Regeneration drift is handled**: because the alarm-arming and pin
@@ -88,8 +88,8 @@ new pin configured automatically.
 You never write priorities. The generator assigns them:
 autostart init task lowest → aperiodic (activated/chained) tasks →
 periodic tasks **rate-monotonically** (fastest period = highest
-priority). Alarm IDs are ordered fastest-first. This reproduces both
-reference demos' hand-tuned maps exactly.
+priority). Alarm IDs are ordered fastest-first. This reproduces the
+reference demo's hand-tuned map exactly.
 
 ## app.yaml reference
 
@@ -134,10 +134,10 @@ simulink:                     # optional Embedded Coder binding
 
 ## Reference configs
 
-`reference-demo/app.yaml` and `comprehensive-demo/app.yaml` regenerate the
-two shipped firmwares to **byte-identical** images — they are the worked
-examples. Regenerate and diff to see for yourself:
+`reference-demo/app.yaml` regenerates the shipped firmware to a
+**byte-identical** image — it is the worked example. Regenerate and diff
+to see for yourself:
 
 ```sh
-python3 tools/erosgen.py app.yaml && make
+python3 tools/erosgen.py reference-demo/app.yaml && make -C reference-demo
 ```

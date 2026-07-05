@@ -33,7 +33,7 @@ EROS-TEST: FAIL <tag>
   channel (deliberately independent of the interrupt-driven production
   UART driver, so a test can exercise that driver without a conflict).
 - `firmware/test_<peripheral>.c` — one image per peripheral, linking the
-  real driver source from `../drivers` (or `../comprehensive-demo`).
+  real driver source from `../drivers` (or `../reference-demo`).
 - `host/runtest.c` — links `libsimavr`, loads the ELF, applies external
   stimulus (ADC volts, GPIO edges, SPI slave echo), captures the UART
   stream, and turns the sentinel into an exit code (`0` pass, `1` fail,
@@ -43,7 +43,7 @@ EROS-TEST: FAIL <tag>
 
 | Test          | Driver              | Kind      | What it proves |
 |---------------|---------------------|-----------|----------------|
-| `uart`        | comprehensive-demo/uart.c | firmware | TX ring + UDRE ISR deliver a well-formed line |
+| `uart`        | reference-demo/uart.c | firmware | TX ring + UDRE ISR deliver a well-formed line |
 | `eeprom`      | drivers/eeprom.c    | firmware  | read/update/wear-skip/block, out-of-range |
 | `timer0_pwm`  | drivers/timer0_pwm.c| firmware  | mode 3, /64 prescaler, connect/true-0%/100% |
 | `i2c`         | drivers/i2c.c       | firmware  | TWI enable + bounded NACK/timeout (no hang) |

@@ -11,7 +11,7 @@
  *
  * The report channel is a tiny POLLED UART TX (busy-wait on UDRE0) that
  * is deliberately independent of the interrupt-driven production driver
- * (comprehensive-demo/uart.c) so a test can exercise that driver without
+ * (reference-demo/uart.c) so a test can exercise that driver without
  * fighting the harness for UDR0. The only exception is test_uart.c,
  * which reports *through* the driver on purpose.
  *

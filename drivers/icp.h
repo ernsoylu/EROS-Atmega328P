@@ -16,7 +16,7 @@
  * ~55 cycles per ISR means ~7% CPU at 10 kHz). A signal slower than
  * ~4 Hz (or removed) is reported as absent via the return value.
  *
- * **EXCLUSIVE with the Timer1 PWM driver** (comprehensive-demo/pwm.c):
+ * **EXCLUSIVE with the Timer1 PWM driver** (reference-demo/pwm.c):
  * both own Timer1 - PWM uses ICR1 as TOP, this driver uses ICR1 as the
  * capture register. Link/initialise one or the other, never both.
  * (Timer2 is the kernel tick and is not an option.)
