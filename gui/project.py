@@ -36,8 +36,14 @@ class ProjectModel:
             self.load(path)
 
     def load(self, path):
-        self.path = Path(path)
-        self.doc = _yaml.load(self.path.read_text()) or {}
+        # Validate the path before touching the filesystem: resolve symlinks and
+        # require an existing regular file, so a bad CLI arg / path can't reach
+        # read_text() on something unexpected.
+        p = Path(path).expanduser().resolve()
+        if not p.is_file():
+            raise FileNotFoundError(f"erosgen GUI: not a readable file: {p}")
+        self.path = p
+        self.doc = _yaml.load(p.read_text()) or {}
 
     def save(self, path=None):
         self.path = Path(path or self.path)
