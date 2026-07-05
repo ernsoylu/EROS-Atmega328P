@@ -191,10 +191,10 @@ budget_check() {
     local nolto=()
     local f
     for f in "${CFLAGS[@]}"; do [[ "$f" == "-flto" ]] || nolto+=("$f"); done
-    avr-gcc "${nolto[@]}" -I"$SCRIPT_DIR" -I"$SCRIPT_DIR/kernel" -c \
+    avr-gcc "${nolto[@]}" -I"$SCRIPT_DIR/reference-demo" -I"$SCRIPT_DIR/kernel" -c \
         -o "$bdir/eros.o"   "$SCRIPT_DIR/kernel/eros.c"
-    avr-gcc "${nolto[@]}" -I"$SCRIPT_DIR" -I"$SCRIPT_DIR/kernel" -c \
-        -o "$bdir/config.o" "$SCRIPT_DIR/config.c"
+    avr-gcc "${nolto[@]}" -I"$SCRIPT_DIR/reference-demo" -I"$SCRIPT_DIR/kernel" -c \
+        -o "$bdir/config.o" "$SCRIPT_DIR/reference-demo/config.c"
     avr-size -B "$bdir/eros.o" "$bdir/config.o" | awk -v fb="$FLASH_BUDGET" -v rb="$RAM_BUDGET" '
         NR==2 { kflash += $1 + $2; kram = $2 + $3 }
         NR==3 { kflash += $1 + $2; arena = $2 + $3 }
@@ -213,15 +213,16 @@ do_build() {
 
     head1 "Building EROS into ./build"
 
-    # --- root reference demo ------------------------------------------
+    # --- reference demo -----------------------------------------------
+    local rd="$SCRIPT_DIR/reference-demo"
     local od="$BUILD_DIR/eros"; mkdir -p "$od"
     say "reference demo (eros):"
     local objs=()
     local rs
     for rs in main.c actuator.c asw_10ms.c asw_50ms.c asw_500ms.c config.c; do
-        objs+=("$(compile "$SCRIPT_DIR/$rs" "$od" "$SCRIPT_DIR" "$SCRIPT_DIR/kernel")")
+        objs+=("$(compile "$rd/$rs" "$od" "$rd" "$SCRIPT_DIR/kernel")")
     done
-    objs+=("$(compile "$SCRIPT_DIR/kernel/eros.c" "$od" "$SCRIPT_DIR" "$SCRIPT_DIR/kernel")")
+    objs+=("$(compile "$SCRIPT_DIR/kernel/eros.c" "$od" "$rd" "$SCRIPT_DIR/kernel")")
     link_hex eros "$od" "${objs[@]}"
     budget_check
 

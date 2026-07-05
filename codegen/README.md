@@ -275,7 +275,7 @@ codegen/
 ```
 
 Integrating into `comprehensive-demo/Makefile` (same recipe for the
-root demo — only the relative paths change). The three touch points are
+reference demo — only the relative paths change). The three touch points are
 `MODEL_DIR`, `VPATH`/`SRCS`, and `CFLAGS`:
 
 ```make
@@ -325,7 +325,7 @@ SRCS       := main.c uart.c pwm.c config.c eros.c ctrl_glue.c $(MODEL_SRCS)
   dominates flash. `--gc-sections` + `-ffunction-sections` (already in
   the flags) discard generated functions you never call.
 - **`eros.sh`**: the repo-root `./eros.sh -build` / `-flash` helper
-  builds and flashes the two *reference* firmwares (root demo and
+  builds and flashes the two *reference* firmwares (reference demo and
   comprehensive demo) with fixed source lists — it does **not** pick up
   model code. Integrate models through the application Makefile as
   above; extend `eros.sh` only if you want it to build a model firmware
