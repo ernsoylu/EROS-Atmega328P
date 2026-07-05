@@ -8,7 +8,7 @@ name: ci
 
 on:
   push:
-    branches: [ main, "claude/**" ]
+    branches: [ main, "claude/**", "ci/**" ]
   pull_request:
   workflow_dispatch:
 
