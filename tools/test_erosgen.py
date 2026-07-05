@@ -453,6 +453,22 @@ def test_scaling_rejects_non_number():
     assert "SCALING_NOT_NUMBER" in codes
 
 
+def test_avr_backend_gpio_idioms():
+    # The AVR backend owns the register/GPIO code-gen idioms os_gen + rte render;
+    # pin these so a future ESP32 backend has an explicit contract to match.
+    from erosgen.backends import bit_clear, bit_read, bit_set, dio_direction_init
+    assert bit_set("DDRB", "PB5") == "DDRB |= (uint8_t)(1u << PB5)"
+    assert bit_clear("PORTB", "PB5") == "PORTB &= (uint8_t)~(1u << PB5)"
+    assert bit_read("RTE_CFG_X_PIN", "RTE_CFG_X_BIT") == \
+        "(uint8_t)((RTE_CFG_X_PIN >> RTE_CFG_X_BIT) & 1u)"
+    # dio direction init: DDR/PORT operators column-aligned, output driven low
+    assert dio_direction_init("LED1_B", True) == [
+        "RTE_CFG_LED1_B_DDR  |= (uint8_t)(1u << RTE_CFG_LED1_B_BIT);",
+        "RTE_CFG_LED1_B_PORT &= (uint8_t)~(1u << RTE_CFG_LED1_B_BIT);"]
+    assert dio_direction_init("SW", False) == [
+        "RTE_CFG_SW_DDR  &= (uint8_t)~(1u << RTE_CFG_SW_BIT);"]
+
+
 def test_multi_model_end_to_end_goldens():
     """Two SWCs in one app: two synthesized tasks/alarms and one combined RTE
     (a Task_<model> per SWC, per-model RTE_CFG_<MODEL>_* identity defines). Pins

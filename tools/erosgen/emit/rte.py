@@ -6,6 +6,7 @@ ADC_Read/ADC_Init for adc ports, DDRx/PORTx/PINx for dio ports. Ports with a
 driver this emitter doesn't handle yet produce a visible #error.
 """
 
+from ..backends import bit_clear, bit_read, bit_set, dio_direction_init
 from ..constants import GENERATED_BANNER
 from ..parse.ert import RTW_TYPES
 
@@ -159,18 +160,18 @@ def _adapter(port):
     if port.driver == "dio" and port.direction == "in":
         return [f"static uint8_t Rte_Read_{stem}(void)",
                 "{",
-                f"    return (uint8_t)((RTE_CFG_{tag}_PIN >> RTE_CFG_{tag}_BIT) & 1u);",
+                f"    return {bit_read(f'RTE_CFG_{tag}_PIN', f'RTE_CFG_{tag}_BIT')};",
                 "}"]
     if port.driver == "dio" and port.direction == "out":
         return [f"static void Rte_Write_{stem}(uint8_t on)",
                 "{",
                 "    if (on)",
                 "    {",
-                f"        RTE_CFG_{tag}_PORT |= (uint8_t)(1u << RTE_CFG_{tag}_BIT);",
+                f"        {bit_set(f'RTE_CFG_{tag}_PORT', f'RTE_CFG_{tag}_BIT')};",
                 "    }",
                 "    else",
                 "    {",
-                f"        RTE_CFG_{tag}_PORT &= (uint8_t)~(1u << RTE_CFG_{tag}_BIT);",
+                f"        {bit_clear(f'RTE_CFG_{tag}_PORT', f'RTE_CFG_{tag}_BIT')};",
                 "    }",
                 "}"]
     if port.driver == "pwm" and port.direction == "out":
@@ -240,12 +241,8 @@ def _rte_init(L, rms, multi):
             elif port.driver == "pwm":
                 L.append("    PWM_Init();")
             elif port.driver == "dio":
-                tag = port.tag
-                if port.direction == "out":
-                    L.append(f"    RTE_CFG_{tag}_DDR  |= (uint8_t)(1u << RTE_CFG_{tag}_BIT);")
-                    L.append(f"    RTE_CFG_{tag}_PORT &= (uint8_t)~(1u << RTE_CFG_{tag}_BIT);")
-                else:
-                    L.append(f"    RTE_CFG_{tag}_DDR  &= (uint8_t)~(1u << RTE_CFG_{tag}_BIT);")
+                for line in dio_direction_init(port.tag, port.direction == "out"):
+                    L.append(f"    {line}")
         L.append("")
         L.append("    /* ASW init. */")
         L.append(f"    {_id_name('INIT_FN', rm, multi)}();")
