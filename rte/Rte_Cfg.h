@@ -3,10 +3,14 @@
  * @brief   RTE configuration for the model<->OS integration (appKnbSwt).
  *
  * This file is the *declarative binding* between the ASW (Simulink SWC)
- * ports/parameters and the BSW (drivers + EROS OS): which driver feeds
- * each input port, which driver each output port actuates, the runnable
- * rate, and the calibration values. It contains no logic - only the
- * configuration a generator needs.
+ * ports and the BSW (drivers + EROS OS): which driver feeds each input
+ * port, which driver each output port actuates, and the runnable rate.
+ * It contains no logic - only the configuration a generator needs.
+ *
+ * Calibration is deliberately NOT here: this SWC exports its parameters
+ * (Embedded Coder ExportToFile), so appKnbSwt_Param.c owns their values.
+ * An RTE only assigns calibration when the SWC *imports* its parameters
+ * (ImportFromFile) - a model storage-class choice, not an RTE one.
  *
  * FUTURE: this file is intended to be emitted by tools/erosgen.py from an
  * app.yaml `models:` section (the same way the Makefile / config.c / .h
@@ -35,10 +39,10 @@
 #define RTE_CFG_LED_PORT           PORTB
 #define RTE_CFG_LED_BIT            5u          /* PB5 / D13 (on-board LED) */
 
-/* ---- Calibration parameters (RTE owns configuration) --------------- */
-/* Assigned into the ASW's exported parameter globals at Rte_Init(). */
-#define RTE_CAL_Knb_Thresh_Pc_Pt   20u         /* switch threshold [%]    */
-#define RTE_CAL_Knb_Hyst_Pc_Pt     5u          /* hysteresis span [%]     */
+/* ---- Calibration ---------------------------------------------------- */
+/* Owned by the model (ExportToFile) in appKnbSwt_Param.c; the RTE does
+ * not assign it. Retune by regenerating the model, or live via a debugger
+ * (the parameters are plain globals - see rte/README.md "Tuning"). */
 
 /* ---- Scheduling: runnable rate assigned to the OS ------------------ */
 #define RTE_CFG_PERIOD_MS          10u         /* 10 ms cyclic task       */

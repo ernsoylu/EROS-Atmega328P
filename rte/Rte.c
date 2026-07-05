@@ -17,7 +17,6 @@
 /* ASW - generated model (read-only) */
 #include "appKnbSwt.h"        /* RTE_CFG_INIT_FN / RTE_CFG_RUNNABLE_FN     */
 #include "appKnbSwt_Intfc.h"  /* RTE_CFG_KNB_SIGNAL / RTE_CFG_LED_SIGNAL   */
-#include "appKnbSwt_Param.h"  /* Knb_Thresh_Pc_Pt / Knb_Hyst_Pc_Pt         */
 
 /* BSW - MCAL drivers (read-only) */
 #include "adc.h"              /* drivers/adc.c                             */
@@ -58,9 +57,10 @@ void Rte_Init(void)
     RTE_CFG_LED_DDR  |= (uint8_t)(1u << RTE_CFG_LED_BIT);
     RTE_CFG_LED_PORT &= (uint8_t)~(1u << RTE_CFG_LED_BIT);
 
-    /* RTE owns configuration: assign ASW calibration parameters. */
-    Knb_Thresh_Pc_Pt = RTE_CAL_Knb_Thresh_Pc_Pt;
-    Knb_Hyst_Pc_Pt   = RTE_CAL_Knb_Hyst_Pc_Pt;
+    /* No calibration assignment here: this SWC exports its parameters
+     * (Embedded Coder ExportToFile), so the model owns their values in
+     * appKnbSwt_Param.c. Retune by regenerating the model or live via a
+     * debugger (the params are plain globals - see rte/README.md). */
 
     /* ASW init. */
     RTE_CFG_INIT_FN();
