@@ -30,6 +30,21 @@ def _signal_ctype(signal, fallback):
     return info[0] if info else fallback
 
 
+def _wide(port):
+    """The arithmetic type for a calibration: int32_t (no 16-bit overflow) when
+    slope and offset are both ints, else single-precision float."""
+    both_int = isinstance(port.slope, int) and isinstance(port.offset, int)
+    return "int32_t" if both_int else "float"
+
+
+def _scale_note(port):
+    """The '(scaled: ...)' comment suffix for a calibrated port (else '')."""
+    if not port.scaled:
+        return ""
+    lhs, rhs = ("port", "raw") if port.direction == "in" else ("driver", "port")
+    return f" (scaled: {lhs} = {rhs}*slope + offset)"
+
+
 def _cfg_defines(port):
     """Rte_Cfg.h #define lines for one bound port (no trailing blank)."""
     tag, p = port.tag, port.params
@@ -71,16 +86,15 @@ def emit_rte_cfg_h(rm, src_name):
     if rm.inputs:
         L.append("/* ---- Input ports: BSW sensor -> ASW port ------------------------ */")
         for port in rm.inputs:
-            note = " (scaled: port = raw*slope + offset)" if port.scaled else ""
             L.append(f"/* {port.signal.name} ({port.signal.ctype}) <- "
-                     f"{port.driver}{note} */")
+                     f"{port.driver}{_scale_note(port)} */")
             L.extend(_cfg_defines(port))
         L.append("")
     if rm.outputs:
         L.append("/* ---- Output ports: ASW port -> BSW actuator --------------------- */")
         for port in rm.outputs:
             L.append(f"/* {port.signal.name} ({port.signal.ctype}) -> "
-                     f"{port.driver} */")
+                     f"{port.driver}{_scale_note(port)} */")
             L.extend(_cfg_defines(port))
         L.append("")
     L.append("/* ---- Scheduling: runnable rate assigned to the OS -------------- */")
@@ -99,8 +113,7 @@ def _adapter(port):
             # math (via int32_t) when both are ints, single-precision float
             # otherwise; either way the constants live in Rte_Cfg.h.
             cty = _signal_ctype(port.signal, "uint16_t")
-            wide = ("int32_t" if isinstance(port.slope, int)
-                    and isinstance(port.offset, int) else "float")
+            wide = _wide(port)
             return [f"static {cty} Rte_Read_{stem}(void)",
                     "{",
                     f"    uint16_t raw = ADC_Read(RTE_CFG_{tag}_ADC_CH);",
@@ -129,6 +142,17 @@ def _adapter(port):
                 "    }",
                 "}"]
     if port.driver == "pwm" and port.direction == "out":
+        if port.scaled:
+            # opt-in calibration: permille = port*slope + offset (the ASW value
+            # in engineering units -> the driver's 0..1000 permille).
+            ptype = _signal_ctype(port.signal, "uint16_t")
+            wide = _wide(port)
+            return [f"static void Rte_Write_{stem}({ptype} value)",
+                    "{",
+                    f"    uint16_t permille = (uint16_t)(({wide})value"
+                    f" * RTE_CFG_{tag}_SLOPE + RTE_CFG_{tag}_OFFSET);",
+                    "    PWM_SetDutyPermille(permille);",
+                    "}"]
         return [f"static void Rte_Write_{stem}(uint16_t permille)",
                 "{",
                 "    PWM_SetDutyPermille(permille);",

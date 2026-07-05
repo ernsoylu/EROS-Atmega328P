@@ -408,11 +408,43 @@ def test_scaling_end_to_end_input():
     assert rms[0].inputs[0].scaled
 
 
-def test_scaling_rejected_on_output():
-    # OUT_Led1_B is a dio output: both non-input and boolean -> rejected loudly.
+def test_scaling_rejected_on_boolean_driver():
+    # OUT_Led1_B is a dio (boolean) port: a linear scale is meaningless -> loud.
     _, codes = _resolve_ports({"out": [{"signal": "OUT_Led1_B", "driver": "dio",
                                         "port": "B", "bit": 5, "slope": 2}]})
     assert "SCALING_UNSUPPORTED" in codes
+
+
+def test_rte_scaling_output_pwm():
+    from erosgen.emit.rte import emit_rte_c, emit_rte_cfg_h
+    from erosgen.models import BoundPort, ResolvedModel
+    from erosgen.parse import Signal
+    # ASW duty in percent (0..100) -> driver permille (0..1000): slope 10.
+    port = BoundPort(Signal("OUT_Duty_Pc", "uint16_T", "out"), "out", "pwm",
+                     {}, "Duty_Pc", 10, 0)
+    rm = ResolvedModel("motor", "motor_initialize", "motor_Runnable", 20,
+                       [], [port], None)
+    cfg, c = emit_rte_cfg_h(rm, "app.yaml"), emit_rte_c(rm, "app.yaml", True)
+    assert "RTE_CFG_DUTY_PC_SLOPE" in cfg and "RTE_CFG_DUTY_PC_OFFSET" in cfg
+    # the write adapter takes the ASW value and converts it to permille
+    assert "static void Rte_Write_Duty_Pc(uint16_t value)" in c
+    assert ("uint16_t permille = (uint16_t)((int32_t)value"
+            " * RTE_CFG_DUTY_PC_SLOPE + RTE_CFG_DUTY_PC_OFFSET);" in c)
+    assert "PWM_SetDutyPermille(permille);" in c and "#error" not in c
+
+
+def test_scaling_suppresses_range_truncation():
+    from erosgen import Diagnostics
+    from erosgen.bind import check_binding
+    from erosgen.parse import Signal
+    sig = Signal("OUT_Duty_Pc", "uint16_T", "out")   # cap 65535 > pwm vmax 1000
+
+    def codes(scaled):
+        s = Diagnostics(strict=False)
+        check_binding(sig, "out", "pwm", {}, s, "port", scaled=scaled)
+        return {d.code for d in s.items}
+    assert "RANGE_TRUNCATION" in codes(False)      # unscaled: wide signal truncates
+    assert "RANGE_TRUNCATION" not in codes(True)   # scaled: the conversion handles it
 
 
 def test_scaling_rejects_non_number():

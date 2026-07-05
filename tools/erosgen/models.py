@@ -7,7 +7,7 @@ binding checks both flow through the Diagnostics sink. Schema: rte/README.md.
 from dataclasses import dataclass
 from pathlib import Path
 
-from .bind import check_binding
+from .bind import DRIVERS, check_binding
 from .parse.ert import ModelInterface, Signal, parse_model
 from .validate import check_keys
 
@@ -51,11 +51,12 @@ def _stem(signal_name):
     return signal_name
 
 
-def _parse_scaling(pd, direction, spec, where, sink):
+def _parse_scaling(pd, driver, where, sink):
     """Read a port's opt-in slope/offset calibration. Returns (slope, offset),
-    or (None, None) when the port declares none. v1 supports it on non-boolean
-    *input* ports only (the sensor characteristic port = raw*slope + offset);
-    anything else is reported and dropped so output/dio ports stay raw."""
+    or (None, None) when the port declares none. The adapter computes
+    out = in*slope + offset in its own dataflow direction (input port: value
+    from the raw reading; output port: driver value from the port). Rejected on
+    boolean drivers (dio), where a linear scale is meaningless."""
     if "slope" not in pd and "offset" not in pd:
         return None, None
     slope, offset = pd.get("slope", 1), pd.get("offset", 0)
@@ -64,10 +65,11 @@ def _parse_scaling(pd, direction, spec, where, sink):
             sink.error("SCALING_NOT_NUMBER",
                        f"{where}: {key} must be a number", where)
             return None, None
-    if direction != "in" or (spec is not None and spec.boolean):
+    drv = DRIVERS.get(driver)
+    if drv is not None and drv.boolean:
         sink.error("SCALING_UNSUPPORTED",
-                   f"{where}: slope/offset scaling is only supported on "
-                   "non-boolean input ports for now", where)
+                   f"{where}: slope/offset scaling is not supported on the "
+                   f"boolean '{driver}' driver", where)
         return None, None
     return slope, offset
 
@@ -132,9 +134,10 @@ def resolve_model(mspec, app_dir, sink):
                 sink.error("PORT_NO_DRIVER", f"{pw}: needs a 'driver'", pw)
                 continue
             params = {k: pd[k] for k in PORT_PARAM_KEYS if k in pd}
-            spec = check_binding(sig, direction, driver, params, sink, pw)
+            slope, offset = _parse_scaling(pd, driver, pw, sink)
+            spec = check_binding(sig, direction, driver, params, sink, pw,
+                                 scaled=slope is not None)
             if spec is not None:
-                slope, offset = _parse_scaling(pd, direction, spec, pw, sink)
                 bucket.append(BoundPort(sig, direction, driver, params,
                                         _stem(signame), slope, offset))
     return ResolvedModel(name, init_fn, runnable_fn, mspec.get("rate_ms"),

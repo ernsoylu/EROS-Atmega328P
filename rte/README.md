@@ -93,10 +93,10 @@ models:
     # (ImportFromFile). appKnbSwt exports them, so none here.
 ```
 
-**Optional input scaling (`slope` / `offset`).** A port carries the **raw**
-driver value by default — scaling normally lives in Simulink (as `IN_KnbVal_Z`
-does). A non-boolean **input** port may instead opt into a generated linear
-calibration by declaring `slope` (and an optional `offset`, default 0):
+**Optional scaling (`slope` / `offset`).** A port carries the **raw** driver
+value by default — scaling normally lives in Simulink (as `IN_KnbVal_Z` does).
+A non-boolean port may instead opt into a generated linear calibration by
+declaring `slope` (and an optional `offset`, default 0):
 
 ```yaml
       in:
@@ -106,11 +106,13 @@ calibration by declaring `slope` (and an optional `offset`, default 0):
           slope: 4.887586       # port = raw*slope + offset (0..1023 -> 0..5000 mV)
 ```
 
-`erosgen` emits `RTE_CFG_<PORT>_SLOPE` / `_OFFSET` #defines in `Rte_Cfg.h` and a
-`Rte_Read_*` adapter that returns the signal's C type, computing the conversion
-in integer math (`int32_t`) when both constants are ints and single-precision
-`float` otherwise. Output-port and boolean (`dio`) scaling are rejected up front
-(`SCALING_UNSUPPORTED`) — invert on the actuator side in Simulink for now.
+`erosgen` emits `RTE_CFG_<PORT>_SLOPE` / `_OFFSET` #defines in `Rte_Cfg.h` and
+calibrates in the port adapter — a `Rte_Read_*` returning the signal's C type
+(`port = raw*slope + offset`), or, on an output, a `Rte_Write_*` converting the
+port back to the driver value (`permille = port*slope + offset` for pwm). The
+math is integer (`int32_t`) when both constants are ints, single-precision
+`float` otherwise. Boolean (`dio`) ports are rejected (`SCALING_UNSUPPORTED`) —
+a linear scale is meaningless on a 1-bit signal.
 
 From this one block, `erosgen` generates `Rte.h` / `Rte_Cfg.h` / `Rte.c` (the
 per-port `Rte_Read_*/Rte_Write_*` adapters, `Rte_Init`, and a `Task_<model>`
