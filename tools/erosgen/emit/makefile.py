@@ -6,7 +6,8 @@ target that reruns the generator via the stable ENTRYPOINT shim.
 """
 import os
 
-from ..constants import GENERATED_BANNER
+from ..constants import (GENERATED_BANNER, UART_RX_RING_DEFAULT,
+                         UART_TX_RING_DEFAULT)
 from ..errors import fail
 from ..paths import ENTRYPOINT
 
@@ -35,8 +36,8 @@ def periph_defines(s):
     if uart is not None:
         uart = uart or {}
         defs.append(f"-DUART_BAUD={int(uart.get('baud', 9600))}UL")
-        defs.append(f"-DUART_TX_SIZE={int(uart.get('tx_ring', 128))}u")
-        defs.append(f"-DUART_RX_SIZE={int(uart.get('rx_ring', 64))}u")
+        defs.append(f"-DUART_TX_SIZE={int(uart.get('tx_ring', UART_TX_RING_DEFAULT))}u")
+        defs.append(f"-DUART_RX_SIZE={int(uart.get('rx_ring', UART_RX_RING_DEFAULT))}u")
     return defs
 
 

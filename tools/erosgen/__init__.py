@@ -7,6 +7,7 @@ caller - the tools/erosgen.py shim entrypoint imports cli.main from here.
 """
 
 from .cli import main, write
+from .constants import __version__
 from .diagnostics import Diagnostic, Diagnostics
 from .emit import (driver_sources, emit_asw_skeleton, emit_config_c,
                    emit_config_h, emit_main_skeleton, emit_makefile,
@@ -19,6 +20,7 @@ from .parse import Calibration, ModelInterface, Signal, parse_model
 from .report import report
 
 __all__ = [
+    "__version__",
     "ConfigError", "fail",
     "Diagnostic", "Diagnostics", "collect_diagnostics",
     "parse_model", "ModelInterface", "Signal", "Calibration",

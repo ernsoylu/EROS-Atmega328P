@@ -199,12 +199,20 @@ class MainWindow(QMainWindow):
         spec, ok = QInputDialog.getText(
             self, "Add Task",
             "name, period_ms (blank = aperiodic), wcet_ms:", text="ctrl, 10, 1")
-        if ok and spec.strip():
-            parts = [p.strip() for p in spec.split(",")]
+        if not (ok and spec.strip()):
+            return
+        parts = [p.strip() for p in spec.split(",")]
+        try:
             period = int(parts[1]) if len(parts) > 1 and parts[1] else None
             wcet = int(parts[2]) if len(parts) > 2 and parts[2] else 1
-            self.project.add_task(parts[0], period, wcet)
-            self.refresh()
+        except ValueError:
+            QMessageBox.warning(
+                self, "Add Task",
+                "period_ms and wcet_ms must be whole numbers "
+                f"(got {spec!r}).")
+            return
+        self.project.add_task(parts[0], period, wcet)
+        self.refresh()
 
     def remove_selected_task(self):
         it = self.tree.currentItem()

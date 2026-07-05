@@ -356,6 +356,60 @@ def test_pwm_rte_adapter():
     assert "RTE_CFG_DUTY_PM_SIGNAL" in emit_rte_cfg_h(rm, "app.yaml")
 
 
+def test_multi_model_rejected():
+    # Two models is unsupported (a single RTE): System must reject it up front,
+    # not silently emit one model's Rte.* over the other's. This locks in the
+    # MULTI_MODEL guard the end-to-end goldens only exercise for one model.
+    doc_text = BASE + """
+tasks: [{ name: a, period_ms: 10, wcet_ms: 1 }]
+resources: [{ name: r, users: [a] }]
+models:
+  - { name: m1, codegen_dir: a_ert_rtw, rate_ms: 10 }
+  - { name: m2, codegen_dir: b_ert_rtw, rate_ms: 10 }
+"""
+    # strict (the CLI/generate path): fails loudly before any file is written
+    try:
+        _system(doc_text)
+    except erosgen.ConfigError as e:
+        assert "only one model" in str(e)
+    else:
+        raise AssertionError("expected ConfigError for two models")
+    # collect (the GUI path): surfaces MULTI_MODEL instead of raising
+    codes = {d.code for d in erosgen.collect_diagnostics(
+        yaml.safe_load(doc_text), Path("app.yaml"))}
+    assert "MULTI_MODEL" in codes
+
+
+def test_cli_rejects_unknown_flag():
+    # argparse exits(2) on an unknown flag instead of silently ignoring it - the
+    # old hand-rolled parser dropped any --flag it didn't recognise, so a typo'd
+    # --chekc ran a real generation instead of a dry run.
+    try:
+        erosgen.main(["erosgen", "app.yaml", "--chekc"])
+    except SystemExit as e:
+        assert e.code == 2
+    else:
+        raise AssertionError("expected SystemExit(2) for an unknown flag")
+
+
+def test_cli_version_flag():
+    try:
+        erosgen.main(["erosgen", "--version"])
+    except SystemExit as e:
+        assert e.code == 0
+    else:
+        raise AssertionError("expected SystemExit(0) for --version")
+
+
+def test_shared_budget_constants_match_report():
+    # The report's RAM plan and the constants must agree (they used to be
+    # independent literals in report.py, the Makefile emitter, and the GUI).
+    from erosgen import constants
+    assert constants.KERNEL_STATE_BYTES == 35
+    assert (constants.UART_TX_RING_DEFAULT, constants.UART_RX_RING_DEFAULT) \
+        == (128, 64)
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
