@@ -65,7 +65,7 @@ jobs:
       - name: Install AVR toolchain + simavr
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-avr avr-libc binutils-avr libsimavr-dev simavr
+          sudo apt-get install -y gcc-avr avr-libc binutils-avr libsimavr-dev simavr libelf-dev
 
       - name: Build test firmware + host runner
         run: make -C tests all

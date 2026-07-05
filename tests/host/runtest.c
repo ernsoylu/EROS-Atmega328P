@@ -67,6 +67,7 @@ static void uart_out_cb(struct avr_irq_t *irq, uint32_t value, void *param)
         {
             g_verdict = VERDICT_FAIL;
             strncpy(g_failtag, g_line + 15, sizeof(g_failtag) - 1);
+            g_failtag[sizeof(g_failtag) - 1] = '\0';
         }
         g_linelen = 0;
     }
