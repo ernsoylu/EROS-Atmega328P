@@ -101,19 +101,17 @@ def main(argv):
                 continue  # model task body is Task_<model> in the generated Rte.c
             fname = app_dir / f"asw_{t.period_ms}ms.c"
             outputs.append((fname, emit_asw_skeleton(s, t), False))
-        # RTE generation: a models: section emits Rte.h/Rte_Cfg.h/Rte.c; the
-        # model is already wired as an OS task/alarm in config.* by System.
-        # The fixed Rte.* filenames are safe because System rejects a second
-        # model up front (MULTI_MODEL, strict) - this loop runs at most once.
+        # RTE generation: a models: section emits one combined Rte.h/Rte_Cfg.h/
+        # Rte.c for every model (a Task_<model> per SWC); each is already wired
+        # as an OS task/alarm in config.* by System.
         if s.models:
             rsink = Diagnostics(strict=True)  # binding errors are fatal, like config
-            for rm in resolve_models(doc, app_dir, rsink):
-                outputs.append((app_dir / "Rte.h",
-                                emit_rte_h(rm, src.name), True))
-                outputs.append((app_dir / "Rte_Cfg.h",
-                                emit_rte_cfg_h(rm, src.name), True))
-                outputs.append((app_dir / "Rte.c",
-                                emit_rte_c(rm, src.name, integrated=True), True))
+            rms = resolve_models(doc, app_dir, rsink)
+            outputs.append((app_dir / "Rte.h", emit_rte_h(rms, src.name), True))
+            outputs.append((app_dir / "Rte_Cfg.h",
+                            emit_rte_cfg_h(rms, src.name), True))
+            outputs.append((app_dir / "Rte.c",
+                            emit_rte_c(rms, src.name, integrated=True), True))
     except ConfigError as e:
         print(e)
         return 1

@@ -453,28 +453,57 @@ def test_scaling_rejects_non_number():
     assert "SCALING_NOT_NUMBER" in codes
 
 
-def test_multi_model_rejected():
-    # Two models is unsupported (a single RTE): System must reject it up front,
-    # not silently emit one model's Rte.* over the other's. This locks in the
-    # MULTI_MODEL guard the end-to-end goldens only exercise for one model.
-    doc_text = BASE + """
-tasks: [{ name: a, period_ms: 10, wcet_ms: 1 }]
-resources: [{ name: r, users: [a] }]
-models:
-  - { name: m1, codegen_dir: a_ert_rtw, rate_ms: 10 }
-  - { name: m2, codegen_dir: b_ert_rtw, rate_ms: 10 }
-"""
-    # strict (the CLI/generate path): fails loudly before any file is written
-    try:
-        _system(doc_text)
-    except erosgen.ConfigError as e:
-        assert "only one model" in str(e)
-    else:
-        raise AssertionError("expected ConfigError for two models")
-    # collect (the GUI path): surfaces MULTI_MODEL instead of raising
-    codes = {d.code for d in erosgen.collect_diagnostics(
-        yaml.safe_load(doc_text), Path("app.yaml"))}
-    assert "MULTI_MODEL" in codes
+def test_multi_model_end_to_end_goldens():
+    """Two SWCs in one app: two synthesized tasks/alarms and one combined RTE
+    (a Task_<model> per SWC, per-model RTE_CFG_<MODEL>_* identity defines). Pins
+    the whole multi-model output. Regenerate after an intended change:
+        uv run python tools/erosgen.py tools/fixtures/model_multi/app.yaml"""
+    from erosgen import Diagnostics, System, resolve_models
+    from erosgen.emit import (emit_config_c, emit_config_h, emit_main_skeleton,
+                              emit_makefile, emit_os_gen_h, emit_rte_c,
+                              emit_rte_cfg_h, emit_rte_h)
+    d = HERE / "fixtures" / "model_multi"
+    doc = yaml.safe_load((d / "app.yaml").read_text())
+    s = System(doc, d / "app.yaml")
+    assert s.model_task_names == {"APPKNBSWT", "MOTOR"}   # both became OS tasks
+    got = {
+        "config.h": emit_config_h(s),
+        "config.c": emit_config_c(s),
+        "Makefile": emit_makefile(s, d.resolve()),
+        "os_gen.h": emit_os_gen_h(s),
+        "main.c":   emit_main_skeleton(s),
+    }
+    sink = Diagnostics(strict=False)
+    rms = resolve_models(doc, d, sink)
+    assert [x.message for x in sink.items if x.severity == "error"] == []
+    assert len(rms) == 2
+    got["Rte.h"] = emit_rte_h(rms, "app.yaml")
+    got["Rte_Cfg.h"] = emit_rte_cfg_h(rms, "app.yaml")
+    got["Rte.c"] = emit_rte_c(rms, "app.yaml", integrated=True)
+    for name, text in got.items():
+        assert text == (d / name).read_text(), f"model_multi/{name} drifted"
+    # per-model identity is namespaced; both SWCs get a task body + alarm
+    assert "RTE_CFG_APPKNBSWT_INIT_FN" in got["Rte_Cfg.h"]
+    assert "RTE_CFG_MOTOR_RUNNABLE_FN" in got["Rte_Cfg.h"]
+    assert "void Task_appKnbSwt(void)" in got["Rte.c"]
+    assert "void Task_motor(void)" in got["Rte.c"]
+    assert "ALARM_MOTOR" in got["config.h"] and "ALARM_APPKNBSWT" in got["config.h"]
+
+
+def test_multi_model_stem_collision_rejected():
+    # Port #defines (RTE_CFG_<TAG>_*) share one namespace, so two SWCs binding a
+    # signal with the same stem must be flagged, not silently miscompiled.
+    from erosgen import Diagnostics
+    from erosgen.models import resolve_models
+    cg = str(REPO / "codegen" / "appKnbSwt_ert_rtw")
+    entry = {"name": "appKnbSwt", "codegen_dir": cg, "rate_ms": 10,
+             "runnable": "appKnbSwt_Runnable",
+             "ports": {"in": [{"signal": "IN_KnbVal_Z", "driver": "adc",
+                               "channel": 0}]}}
+    doc = {"models": [entry, dict(entry)]}   # two SWCs, same KnbVal_Z stem
+    sink = Diagnostics(strict=False)
+    resolve_models(doc, Path("."), sink)
+    assert "PORT_STEM_COLLISION" in {d.code for d in sink.items}
 
 
 def test_cli_rejects_unknown_flag():

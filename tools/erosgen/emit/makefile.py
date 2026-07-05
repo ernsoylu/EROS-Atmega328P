@@ -87,19 +87,33 @@ def emit_makefile(s, app_dir):
     # RTE-generated model (models: section). The RTE (Rte.c) is generated into
     # the app dir; the model ERT sources and any port-bound drivers are added.
     if s.models:
-        m = s.models[0]
-        model_block = [
-            f"MODEL_DIR  := {m['codegen_dir']}",
-            "MODEL_SRCS := $(filter-out ert_main.c,"
-            "$(notdir $(wildcard $(MODEL_DIR)/*.c)))",
-        ]
-        vpath.append("$(MODEL_DIR)")
-        incs.append("-I$(MODEL_DIR)")
+        if len(s.models) == 1:
+            m = s.models[0]
+            model_block = [
+                f"MODEL_DIR  := {m['codegen_dir']}",
+                "MODEL_SRCS := $(filter-out ert_main.c,"
+                "$(notdir $(wildcard $(MODEL_DIR)/*.c)))",
+            ]
+            vpath.append("$(MODEL_DIR)")
+            incs.append("-I$(MODEL_DIR)")
+        else:
+            # One MODEL_DIR<n> per SWC; $(sort) dedups shared rtw runtime
+            # sources (rt_nonfinite.c, ...) that several models emit.
+            model_block, wilds = [], []
+            for i, m in enumerate(s.models, 1):
+                model_block.append(f"MODEL_DIR{i}  := {m['codegen_dir']}")
+                vpath.append(f"$(MODEL_DIR{i})")
+                incs.append(f"-I$(MODEL_DIR{i})")
+                wilds.append(f"$(wildcard $(MODEL_DIR{i})/*.c)")
+            model_block.append(
+                "MODEL_SRCS := $(filter-out ert_main.c,"
+                f"$(sort $(notdir {' '.join(wilds)})))")
         if "Rte.c" not in app_srcs:
             app_srcs.append("Rte.c")
-        for fname in model_driver_srcs(m, s.profile):
-            if fname not in ext_drv:
-                ext_drv.append(fname)
+        for m in s.models:
+            for fname in model_driver_srcs(m, s.profile):
+                if fname not in ext_drv:
+                    ext_drv.append(fname)
         if ext_drv and s.drivers_dir not in vpath:
             vpath.append(s.drivers_dir)
         if ext_drv and f"-I{s.drivers_dir}" not in incs:

@@ -127,10 +127,12 @@ driver, `emit/rte.py` emits the C.
 python3 tools/erosgen.py tools/fixtures/model_app/app.yaml   # a complete app
 ```
 
-The one-model-per-app case is supported today (single RTE); the hand-written
-`rte/` here stays as the worked reference and the simavr test's fixture. Its
-CI gate compiles a generated `model_app` firmware with `avr-gcc -Werror`.
-Calibration assignment (`ImportFromFile` SWCs) and multi-model apps are not
+Multiple SWCs in one app share a single combined RTE — a `Task_<model>` per SWC
+and per-model `RTE_CFG_<MODEL>_*` identity defines, with port stems required
+unique across models (they share the `RTE_CFG_<TAG>_*` namespace). The
+hand-written `rte/` here stays as the worked reference and the simavr test's
+fixture. Its CI gate compiles a generated `model_app` firmware with
+`avr-gcc -Werror`. Calibration assignment (`ImportFromFile` SWCs) is not
 generated yet. The GUI (`gui/`) exposes this via a **Model** menu — add a
 codegen model and bind its ports to peripherals interactively.
 

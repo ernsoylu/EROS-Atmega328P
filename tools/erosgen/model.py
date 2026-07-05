@@ -298,10 +298,8 @@ class System:
                            f"model '{name}': needs 'rate_ms'", f"model '{name}'")
                 continue
             out.append(m)
-        if len(out) > 1:
-            sink.error("MULTI_MODEL",
-                       "only one model per app for now (single RTE)", "models")
-            out = out[:1]
+        # Each model becomes one synthesized OS task, so the number of models is
+        # bounded by the 8-task ready-mask limit checked below - no separate cap.
         return out
 
     def _parse_gpio(self, entries, sink):

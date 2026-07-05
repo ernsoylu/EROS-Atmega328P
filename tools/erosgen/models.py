@@ -151,4 +151,18 @@ def resolve_models(doc, app_dir, sink):
         rm = resolve_model(m, app_dir, sink)
         if rm is not None:
             out.append(rm)
+    # Port #defines (RTE_CFG_<TAG>_*) share one Rte_Cfg.h namespace, so a port
+    # stem reused across models would collide - flag it before it miscompiles.
+    if len(out) > 1:
+        owner = {}
+        for rm in out:
+            for port in rm.inputs + rm.outputs:
+                if port.tag in owner:
+                    sink.error("PORT_STEM_COLLISION",
+                               f"port stem '{port.stem}' is used by both "
+                               f"'{owner[port.tag]}' and '{rm.name}'; stems must "
+                               "be unique across models (shared Rte_Cfg namespace)",
+                               f"model '{rm.name}'")
+                else:
+                    owner[port.tag] = rm.name
     return out
