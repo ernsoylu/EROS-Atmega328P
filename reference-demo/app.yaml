@@ -8,7 +8,7 @@
 
 system:
   name: eros
-  kernel_dir: kernel          # kernel lives in ./kernel for this app
+  kernel_dir: ../kernel       # kernel lives in the repo root's kernel/
   tick_hz: 1000
   hooks: { startup: true, error: true, shutdown: true }
   budget: { flash: 3072, ram: 128, sram_total: 2048 }

@@ -32,8 +32,8 @@ jobs:
       - name: Codegen unit tests (erosgen golden + budget checks)
         run: python3 tools/test_erosgen.py
 
-      - name: Build root demo + memory budget
-        run: make all
+      - name: Build reference demo + memory budget
+        run: make -C reference-demo all
 
       - name: Build comprehensive-demo
         run: make -C comprehensive-demo
@@ -98,7 +98,7 @@ jobs:
 
       - name: Build firmware
         run: |
-          make all
+          make -C reference-demo all
           make -C comprehensive-demo
 
       - name: Boot smoke (survives 3s of guest time without crashing)

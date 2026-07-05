@@ -9,7 +9,7 @@ MCU     := atmega328p
 F_CPU   := 16000000UL
 TARGET  := eros
 
-VPATH   := kernel
+VPATH   := ../kernel
 
 APP_SRCS := main.c actuator.c asw_10ms.c asw_50ms.c asw_500ms.c
 SRCS     := $(APP_SRCS) eros.c config.c
@@ -27,7 +27,7 @@ BAUD    ?= 57600          # old-bootloader Nano; Optiboot: 115200
 CFLAGS  := -Wall -Wextra -Werror -std=c99 -Os -flto \
            -ffunction-sections -fdata-sections -fno-common \
            -mmcu=$(MCU) -DF_CPU=$(F_CPU) \
-           -I. -Ikernel
+           -I. -I../kernel
 LDFLAGS := -Wl,--gc-sections -Wl,-Map=$(TARGET).map
 
 BUDGET_DIR    := build_budget
@@ -92,7 +92,7 @@ flash: $(TARGET).hex
 # Run this after editing app.yaml (config is NOT auto-rebuilt,
 # so a Python-less CI can still 'make' from committed output).
 config:
-	python3 tools/erosgen.py app.yaml
+	python3 ../tools/erosgen.py app.yaml
 
 clean:
 	rm -rf $(OBJS) $(DEPS) $(BUDGET_DIR) \

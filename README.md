@@ -20,8 +20,8 @@ Measured with avr-gcc 7.3 (`-Os`, non-LTO reference build — the shipped
 | Stack + idle RAM (reported separately) | — | 1975 B |
 | Whole demo image (LTO + `--gc-sections`) | — | 2132 B Flash / 72 B RAM |
 
-`make` builds, prints `avr-size` output and **fails the build** if a
-budget is exceeded (`make budget`).
+`make -C reference-demo` builds, prints `avr-size` output and **fails the
+build** if a budget is exceeded (`make -C reference-demo budget`).
 
 ## Layout
 
@@ -32,21 +32,19 @@ kernel/               app-agnostic kernel, reused by every application
   eros.h           public API + doc comments (semantics, error codes)
   eros.c           scheduler, tick ISR, alarms, resources, mailbox,
                       pool, stack canary, watchdog, .init3 WDT fix
-config.h / config.c   the reference demo's static configuration ("OIL
-                      file"): tasks, priorities, alarms, resources, pool
-                      geometry, hooks, aliveness mask — PROGMEM tables
-main.c                integration layer: hooks + one-shot init task +
-                      main() — no periodic application code
-asw_10ms.c/.h         TASK_FAST — scope channel PD2 + mailbox consumer
-asw_50ms.c/.h         TASK_MED — scope channel PD3 + pool/mailbox producer
-asw_500ms.c/.h        TASK_SLOW (PD4, ChainTask demo) + the chained
-                      TASK_REPORT 2 s heartbeat (PD5)
-asw_ipc.h             producer→consumer payload protocol shared by the
-                      10/50 ms rates + the concurrency rationale
-actuator.c/.h         polymorphic GPIO driver (OOP-in-C, instances and
-                      vtables 100% in PROGMEM)
-Makefile              mandated warning-free flags, .map file, size/budget
-                      targets, avrdude flash target (old-bootloader baud)
+reference-demo/       the primary reference application (parallels
+                      comprehensive-demo/): `make -C reference-demo`
+  app.yaml         its configuration ("OIL file"); the config.*/Makefile
+                      below are generated from it by tools/erosgen.py
+  config.h/.c      generated static config: tasks, priorities, alarms,
+                      resources, pool geometry, hooks, aliveness mask
+  main.c           integration layer: hooks + one-shot init task + main()
+  asw_10ms.c/.h    TASK_FAST — scope channel PD2 + mailbox consumer
+  asw_50ms.c/.h    TASK_MED — scope channel PD3 + pool/mailbox producer
+  asw_500ms.c/.h   TASK_SLOW (PD4, ChainTask) + chained TASK_REPORT (PD5)
+  asw_ipc.h        producer→consumer payload protocol + concurrency notes
+  actuator.c/.h    polymorphic GPIO driver (OOP-in-C, vtables in PROGMEM)
+  Makefile         generated: warning-free flags, size/budget, flash target
 comprehensive-demo/   a second, bigger application on the same kernel:
                       interrupt-driven serial console (ON/OFF/STAT),
                       debounced button, Timer1 PWM breathing LED,
@@ -56,12 +54,10 @@ drivers/              app-agnostic drivers completing the ATmega328P
                       INT/PCINT, Timer0 PWM, Timer1 input capture,
                       analog comparator — pins, WCETs, ISR categories
                       and resource conflicts in its README.md
-tools/erosgen.py      system configurator: compiles app.yaml into
-                      config.h/config.c/Makefile + ASW skeletons;
+tools/erosgen.py      system configurator: compiles each app's app.yaml
+                      into config.h/config.c/Makefile + ASW skeletons;
                       selects which peripherals compile and sizes the
                       RAM-dominant buffers — see tools/README.md
-app.yaml              the reference demo's configuration, from which
-                      its config.*/Makefile are generated
 codegen/              Simulink / Embedded Coder output (ASW): drop
                       <model>_ert_rtw here, kept frozen; README.md
                       documents model configuration and data types
@@ -228,11 +224,11 @@ either with `EROS_PORT=` / `EROS_BAUD=`.
 Or drive the Makefiles directly:
 
 ```sh
-make                 # build + size + budget check (fails if over budget)
-make flash           # avrdude, old-bootloader Nano (57600 baud)
-make flash BAUD=115200 PORT=/dev/ttyACM0   # Optiboot boards
+make -C reference-demo         # build + size + budget check (fails if over budget)
+make -C reference-demo flash   # avrdude, old-bootloader Nano (57600 baud)
+make -C reference-demo flash BAUD=115200 PORT=/dev/ttyACM0   # Optiboot boards
 
-cd comprehensive-demo && make              # the second application
+make -C comprehensive-demo     # the second application
 ```
 
 Mandated flags (warning-free): `-Wall -Wextra -Werror -std=c99 -Os
@@ -264,7 +260,7 @@ Because **Renode has no AVR core**, the firmware is executed under
 **simavr** (the AVR-native simulator) in CI. `.github/workflows/ci.yml`
 runs three jobs on every push/PR:
 
-1. **build** — erosgen unit tests, root demo + memory-budget gate,
+1. **build** — erosgen unit tests, reference demo + memory-budget gate,
    comprehensive-demo, and `-Werror` compile gates for the drivers and
    the generated model + RTE.
 2. **sim** — builds self-checking test firmware and a `libsimavr` host

@@ -134,7 +134,7 @@ simulink:                     # optional Embedded Coder binding
 
 ## Reference configs
 
-`app.yaml` (root demo) and `comprehensive-demo/app.yaml` regenerate the
+`reference-demo/app.yaml` and `comprehensive-demo/app.yaml` regenerate the
 two shipped firmwares to **byte-identical** images — they are the worked
 examples. Regenerate and diff to see for yourself:
 

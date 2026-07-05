@@ -31,7 +31,7 @@ def _system_from(path):
 
 
 DEMOS = [
-    (REPO / "app.yaml", REPO),
+    (REPO / "reference-demo" / "app.yaml", REPO / "reference-demo"),
     (REPO / "comprehensive-demo" / "app.yaml", REPO / "comprehensive-demo"),
 ]
 
@@ -53,7 +53,7 @@ def test_demos_config_c_golden():
 
 
 def test_priority_is_rate_monotonic():
-    s = _system_from(REPO / "app.yaml")
+    s = _system_from(REPO / "reference-demo" / "app.yaml")
     prio = {t.name: t.priority for t in s.tasks}
     # autostart lowest, aperiodic next, then faster => higher.
     assert prio["INIT"] == 0
@@ -62,7 +62,7 @@ def test_priority_is_rate_monotonic():
 
 
 def test_resource_ceiling_is_highest_user():
-    s = _system_from(REPO / "app.yaml")
+    s = _system_from(REPO / "reference-demo" / "app.yaml")
     res = next(r for r in s.resources if r.name == "DEMO")
     assert res.ceiling.name == "FAST"  # highest-priority of {FAST, MED}
 

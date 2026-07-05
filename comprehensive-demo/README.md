@@ -3,7 +3,7 @@
 A complete small firmware running on the **EROS** (Embedded Realtime
 Operating System) **OSEK BCC1 kernel** (compiled from `../kernel/`
 unchanged — only the static configuration in this folder differs from
-the root demo, demonstrating the OSEK "one kernel, per-application
+the reference demo, demonstrating the OSEK "one kernel, per-application
 config" model).
 
 | Feature | Task | Period |
