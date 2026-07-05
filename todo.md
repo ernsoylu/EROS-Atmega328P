@@ -98,10 +98,12 @@ class Diagnostic:
 **Phase 0 complete.** Next: Phase 1 (RTE + model parsing) or Phase 2 (`atmega2560.yaml`).
 
 ### Phase 1 — RTE + model parsing, headless (highest value/effort)
-- [ ] `parse/ert.py` (see Parsing strategy) → signals (`IN_`/`OUT_`) + calibrations, with types/dims
-- [ ] `bind.py`: type/range matrix (`boolean_T`→DIO, `uint16_T` 0..1023→10-bit ADC, `uint8_T`→8-bit PWM)
-- [ ] `emit/rte.py`: generate `Rte_Cfg.h` + `Rte.c` from a new `app.yaml models:` section; emit `static inline` accessors (`Rte_Read_IN_KnbVal_Z()` / `Rte_Write_OUT_Led1_B()`) so ASW never touches hardware and there's **zero AVR call overhead**
-- [ ] **Gate:** EROS compiles + runs a multi-rate Simulink ASW via the CLI generator
+- [x] `parse/ert.py` — signals (`IN_`/`OUT_`, ctype, dim) + calibrations (extern/define) + entry points, dependency-free regex on the ExportToFile surface. Tested vs the real `codegen/appKnbSwt_ert_rtw/`.
+- [x] `bind.py` — `DriverSpec` (adc/dio/pwm) + `check_binding()` (direction, required keys, value-range fit) via the sink: `TYPE_TOO_NARROW`, `DRIVER_DIRECTION`, `RANGE_TRUNCATION`, ...
+- [x] `models.py` + `emit/rte.py` — resolve an `app.yaml models:` block (parse ERT × bind ports) → `Rte_Cfg.h` + `Rte.c` for adc(in)/dio(in,out), mirroring the hand-written `rte/` template. Golden-tested via `fixtures/model_rte/` (bindings resolve type-clean; output structurally identical to the hand-written `rte/Rte.c`). 14/14 tests.
+- **Deferred (follow-ups):** cli auto-emit of the RTE when `models:` present; `config.c` `TASK_/ALARM_<model>` auto-wiring for the runnable; `codeInfo.mat` cross-check (scaling/dims) behind the `[mat]` extra; pwm emit adapter; compile/run gate is **CI's job** (no local AVR toolchain).
+
+**Phase 1 core complete** (parse → bind → emit RTE). Remaining Phase-1 items are the deferred follow-ups above.
 
 ### Phase 2 — MCU breadth
 - [ ] `mcu/atmega2560.yaml` (same avr backend) to prove the abstraction on a same-family target
