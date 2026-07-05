@@ -1,0 +1,218 @@
+"""Emitter for the application Makefile (per-.o compile, LTO link, budgets).
+
+driver_sources() resolves selected peripherals to source files; emit_makefile()
+assembles SRCS/CFLAGS, the optional budget/image gates, and the ``config:``
+target that reruns the generator via the stable ENTRYPOINT shim.
+"""
+import os
+
+from ..constants import GENERATED_BANNER
+from ..errors import fail
+from ..mcu import KNOWN_PERIPHERALS
+from ..paths import ENTRYPOINT
+
+
+def driver_sources(s, app_dir):
+    """Resolve peripheral names to source files: app dir wins, then
+    drivers_dir (added to VPATH)."""
+    local, external = [], []
+    for p in sorted(s.peripherals):
+        fname = KNOWN_PERIPHERALS[p]
+        if (app_dir / fname).exists():
+            local.append(fname)
+        elif s.drivers_dir and (app_dir / s.drivers_dir / fname).exists():
+            external.append(fname)
+        else:
+            fail(f"peripheral '{p}': source {fname} not found in app dir"
+                 + (f" or {s.drivers_dir}" if s.drivers_dir else
+                    " (set system.drivers_dir)"))
+    return local, external
+
+
+def periph_defines(s):
+    defs = []
+    uart = s.peripherals.get("uart")
+    if uart is not None:
+        uart = uart or {}
+        defs.append(f"-DUART_BAUD={int(uart.get('baud', 9600))}UL")
+        defs.append(f"-DUART_TX_SIZE={int(uart.get('tx_ring', 128))}u")
+        defs.append(f"-DUART_RX_SIZE={int(uart.get('rx_ring', 64))}u")
+    return defs
+
+
+def emit_makefile(s, app_dir):
+    local_drv, ext_drv = driver_sources(s, app_dir)
+    # Auto-include the generated per-rate ASW files so a fresh project
+    # builds without hand-editing sources; dedup against any the user
+    # listed explicitly (the reference demo lists them for readability).
+    asw_files = [f"asw_{t.period_ms}ms.c" for t in s.periodic]
+    app_srcs = list(s.sources)
+    for f in asw_files + local_drv:
+        if f not in app_srcs:
+            app_srcs.append(f)
+    vpath = [s.kernel_dir]
+    if ext_drv:
+        vpath.append(s.drivers_dir)
+    incs = ["-I.", f"-I{s.kernel_dir}"]
+    if ext_drv:
+        incs.append(f"-I{s.drivers_dir}")
+
+    model_block = []
+    if s.simulink:
+        mdir = s.simulink.get("dir", "../codegen")
+        model = s.simulink["model"]
+        model_block = [
+            f"MODEL_DIR  := {mdir}/{model}_ert_rtw",
+            "MODEL_SRCS := $(filter-out ert_main.c,"
+            "$(notdir $(wildcard $(MODEL_DIR)/*.c)))",
+        ]
+        vpath.append(f"{mdir} $(MODEL_DIR)")
+        incs.append(f"-I{mdir} -I$(MODEL_DIR)")
+
+    defs = periph_defines(s)
+
+    # Whole-image budget gate (real LTO elf, in the size target). The
+    # kernel budget below stays a separate, non-LTO check: UART/PWM rings
+    # are application RAM and never touch eros.o/config.o.
+    image_flash = s.budget.get("image_flash") if s.budget else None
+    image_ram = s.budget.get("image_ram") if s.budget else None
+    has_image_gate = image_flash is not None and image_ram is not None
+
+    L = []
+    L.append("# =====================================================================")
+    L.append(f"# {GENERATED_BANNER.format(src=s.src.name)}")
+    L.append("#")
+    L.append(f"# Application '{s.name}' on the EROS kernel. Only the peripherals")
+    L.append("# selected in the YAML are compiled; everything else costs 0 bytes.")
+    L.append("# =====================================================================")
+    L.append("")
+    L.append("MCU     := atmega328p")
+    L.append("F_CPU   := 16000000UL")
+    L.append(f"TARGET  := {s.name}")
+    L.append("")
+    L.extend(model_block)
+    L.append(f"VPATH   := {' '.join(vpath)}")
+    L.append("")
+    L.append(f"APP_SRCS := {' '.join(app_srcs)}")
+    srcs = "$(APP_SRCS) " + " ".join(ext_drv + ["eros.c", "config.c"])
+    if s.simulink:
+        srcs += " $(MODEL_SRCS)"
+    L.append(f"SRCS     := {srcs}")
+    L.append("OBJS     := $(SRCS:.c=.o)")
+    L.append("DEPS     := $(SRCS:.c=.d)")
+    L.append("")
+    L.append("CC      := avr-gcc")
+    L.append("OBJCOPY := avr-objcopy")
+    L.append("SIZE    := avr-size")
+    L.append("AVRDUDE := avrdude")
+    L.append("")
+    L.append("PORT    ?= /dev/ttyUSB0")
+    L.append("BAUD    ?= 57600          # old-bootloader Nano; Optiboot: 115200")
+    L.append("")
+    if defs:
+        L.append("# Peripheral geometry from app.yaml (overrides driver defaults)")
+        L.append(f"PERIPH_DEFS := {' '.join(defs)}")
+        defs_ref = " $(PERIPH_DEFS)"
+    else:
+        defs_ref = ""
+    L.append("CFLAGS  := -Wall -Wextra -Werror -std=c99 -Os -flto \\")
+    L.append("           -ffunction-sections -fdata-sections -fno-common \\")
+    L.append(f"           -mmcu=$(MCU) -DF_CPU=$(F_CPU){defs_ref} \\")
+    L.append(f"           {' '.join(incs)}")
+    L.append("LDFLAGS := -Wl,--gc-sections -Wl,-Map=$(TARGET).map")
+    L.append("")
+    if s.budget:
+        L.append("BUDGET_DIR    := build_budget")
+        L.append("CFLAGS_NOLTO  := $(filter-out -flto,$(CFLAGS))")
+        L.append(f"FLASH_BUDGET  := {int(s.budget.get('flash', 3072))}")
+        L.append(f"RAM_BUDGET    := {int(s.budget.get('ram', 128))}")
+        L.append(f"SRAM_TOTAL    := {int(s.budget.get('sram_total', 2048))}")
+        if has_image_gate:
+            L.append(f"IMAGE_FLASH_BUDGET := {int(image_flash)}")
+            L.append(f"IMAGE_RAM_BUDGET   := {int(image_ram)}")
+        L.append("")
+        L.append(".PHONY: all size budget flash clean config")
+        L.append("")
+        L.append("all: $(TARGET).hex size budget")
+    else:
+        L.append(".PHONY: all size flash clean config")
+        L.append("")
+        L.append("all: $(TARGET).hex size")
+    L.append("")
+    L.append("$(TARGET).elf: $(OBJS)")
+    L.append("\t$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^")
+    L.append("")
+    L.append("$(TARGET).hex: $(TARGET).elf")
+    L.append("\t$(OBJCOPY) -O ihex -R .eeprom $< $@")
+    L.append("")
+    L.append("%.o: %.c")
+    L.append("\t$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<")
+    L.append("")
+    L.append("size: $(TARGET).elf")
+    L.append('\t@echo "---- final image (LTO) --------------------------------------"')
+    L.append("\t@$(SIZE) -B $(TARGET).elf")
+    if has_image_gate:
+        L.append("\t@$(SIZE) -B $(TARGET).elf | awk ' \\")
+        L.append("\t  NR==2 { flash = $$1 + $$2; ram = $$2 + $$3; \\")
+        L.append('\t    printf("whole image : %d / %d B Flash, %d / %d B RAM\\n", \\')
+        L.append("\t           flash, $(IMAGE_FLASH_BUDGET), ram, $(IMAGE_RAM_BUDGET)); \\")
+        L.append("\t    if (flash > $(IMAGE_FLASH_BUDGET) || ram > $(IMAGE_RAM_BUDGET)) { \\")
+        L.append('\t      printf("IMAGE BUDGET EXCEEDED\\n"); exit 1; \\')
+        L.append("\t    } else { \\")
+        L.append('\t      printf("image budgets OK\\n"); \\')
+        L.append("\t    } }'")
+    L.append("")
+    if s.budget:
+        L.append("$(BUDGET_DIR):")
+        L.append("\tmkdir -p $(BUDGET_DIR)")
+        L.append("")
+        L.append("$(BUDGET_DIR)/%.o: %.c | $(BUDGET_DIR)")
+        L.append("\t$(CC) $(CFLAGS_NOLTO) -MMD -MP -c -o $@ $<")
+        L.append("")
+        L.append("APP_BUDGET_OBJS := $(addprefix $(BUDGET_DIR)/,$(APP_SRCS:.c=.o))")
+        L.append("")
+        L.append("budget: $(BUDGET_DIR)/eros.o $(BUDGET_DIR)/config.o $(APP_BUDGET_OBJS)")
+        L.append('\t@echo "---- kernel budget check (non-LTO reference build) ----------"')
+        L.append("\t@$(SIZE) -B $(BUDGET_DIR)/eros.o $(BUDGET_DIR)/config.o \\")
+        L.append("\t         $(APP_BUDGET_OBJS) | awk ' \\")
+        L.append("\t  NR==2 { kflash += $$1 + $$2; kram   = $$2 + $$3 } \\")
+        L.append("\t  NR==3 { kflash += $$1 + $$2; arena  = $$2 + $$3 } \\")
+        L.append("\t  NR>=4 { appram += $$2 + $$3 } \\")
+        L.append("\t  END { \\")
+        L.append('\t    printf("kernel Flash (eros.o+config.o) : %4d / %d bytes\\n", \\')
+        L.append("\t           kflash, $(FLASH_BUDGET)); \\")
+        L.append('\t    printf("kernel static RAM (eros.o)     : %4d / %d bytes\\n", \\')
+        L.append("\t           kram, $(RAM_BUDGET)); \\")
+        L.append('\t    printf("pool arena (config.o, excluded)   : %4d bytes\\n", arena); \\')
+        L.append('\t    printf("application RAM (app objects)     : %4d bytes\\n", appram); \\')
+        L.append('\t    printf("stack + idle RAM (of %d total)  : %4d bytes\\n", \\')
+        L.append("\t           $(SRAM_TOTAL), $(SRAM_TOTAL) - kram - arena - appram); \\")
+        L.append("\t    if (kflash > $(FLASH_BUDGET) || kram > $(RAM_BUDGET)) { \\")
+        L.append('\t      printf("BUDGET EXCEEDED\\n"); exit 1; \\')
+        L.append("\t    } else { \\")
+        L.append('\t      printf("budgets OK\\n"); \\')
+        L.append("\t    } \\")
+        L.append("\t  }'")
+        L.append("")
+    L.append("flash: $(TARGET).hex")
+    L.append("\t$(AVRDUDE) -v -p m328p -c arduino -P $(PORT) -b $(BAUD) \\")
+    L.append("\t           -U flash:w:$(TARGET).hex:i")
+    L.append("")
+    erosgen_rel = os.path.relpath(ENTRYPOINT, str(app_dir))
+    L.append("# Regenerate config.h/config.c/Makefile/os_gen.h from the YAML.")
+    L.append("# Run this after editing app.yaml (config is NOT auto-rebuilt,")
+    L.append("# so a Python-less CI can still 'make' from committed output).")
+    L.append("config:")
+    L.append(f"\tpython3 {erosgen_rel} {s.src.name}")
+    L.append("")
+    L.append("clean:")
+    if s.budget:
+        L.append("\trm -rf $(OBJS) $(DEPS) $(BUDGET_DIR) \\")
+        L.append("\t       $(TARGET).elf $(TARGET).hex $(TARGET).map")
+    else:
+        L.append("\trm -f $(OBJS) $(DEPS) $(TARGET).elf $(TARGET).hex $(TARGET).map")
+    L.append("")
+    L.append("-include $(DEPS)")
+    if s.budget:
+        L.append("-include $(addprefix $(BUDGET_DIR)/,$(DEPS))")
+    return "\n".join(L) + "\n"

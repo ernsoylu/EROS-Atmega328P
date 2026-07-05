@@ -1,0 +1,276 @@
+"""The parsed, validated system model: Task, Resource, System.
+
+System.__init__ parses the YAML doc into the domain model, assigns
+rate-monotonic priorities, and runs every validation gate (pin ownership,
+schedulability, ...). It currently fails fast via fail(); the Phase 0 follow-up
+extracts a non-throwing collect_diagnostics() path for the future GUI.
+"""
+import difflib
+import math
+
+from .constants import MAIN_C
+from .errors import fail
+from .mcu import CONFLICTS_HARD, KNOWN_PERIPHERALS, PERIPHERAL_PINS
+from .validate import check_keys, is_pow2, normalize_pin
+
+
+class Task:
+    def __init__(self, d):
+        if "name" not in d:
+            fail("every task needs a name")
+        self.name = str(d["name"]).upper()
+        check_keys(d, "task", f"task '{self.name}'")
+        self.entry = d.get("entry", "Task_" + self.name.capitalize())
+        self.period_ms = d.get("period_ms")     # aperiodic when omitted
+        self.wcet_ms = d.get("wcet_ms", 1)
+        self.autostart = bool(d.get("autostart", False))
+        self.watchdog = bool(d.get("watchdog", self.period_ms is not None))
+        self.runnables = d.get("runnables", [])
+        self.priority = None                    # assigned later
+        self.period_ticks = None                # computed once tick known
+        self.wcet_ticks = None
+        if self.period_ms is not None and self.autostart:
+            fail(f"task {self.name}: autostart tasks must be aperiodic "
+                 "(they arm the alarms)")
+        if self.watchdog and self.period_ms is None:
+            fail(f"task {self.name}: watchdog supervision requires a period")
+
+    def compute_ticks(self, tick_ms):
+        if self.period_ms is not None:
+            self.period_ticks = self.period_ms // tick_ms
+        # WCET rounds UP to whole ticks (never under-budget), min 1.
+        self.wcet_ticks = max(1, math.ceil(self.wcet_ms / tick_ms))
+
+
+class Resource:
+    def __init__(self, d, tasks_by_name):
+        if "name" not in d:
+            fail("every resource needs a name")
+        check_keys(d, "resource", f"resource '{d['name']}'")
+        self.name = str(d["name"]).upper()
+        users = d.get("users", [])
+        if not users:
+            fail(f"resource {self.name}: needs a non-empty users list")
+        self.users = []
+        for u in users:
+            key = str(u).upper()
+            if key not in tasks_by_name:
+                fail(f"resource {self.name}: unknown user task '{u}'")
+            self.users.append(tasks_by_name[key])
+        self.mask_tick_isr = bool(d.get("mask_tick_isr", False))
+
+    @property
+    def ceiling(self):
+        return max(self.users, key=lambda t: t.priority)
+
+
+class System:
+    def __init__(self, doc, src_path):
+        self.src = src_path
+        if not isinstance(doc, dict):
+            fail("top level of the YAML must be a mapping")
+        check_keys(doc, "doc", "top level")
+        sysd = doc.get("system", {})
+        check_keys(sysd, "system", "system")
+        self.name = sysd.get("name", "app")
+        self.kernel_dir = sysd.get("kernel_dir", "../kernel")
+        self.drivers_dir = sysd.get("drivers_dir")
+        # The kernel's Timer2 tick is hardware-fixed at 1 kHz (register
+        # values in eros.c are derived for 16 MHz / 1 kHz), so 1 tick ==
+        # 1 ms is a kernel invariant, not a knob. Reject anything else
+        # rather than silently emitting wrong alarm periods.
+        self.tick_hz = int(sysd.get("tick_hz", 1000))
+        if self.tick_hz != 1000:
+            fail("tick_hz must be 1000: the EROS kernel tick (Timer2) is "
+                 "fixed at 1 kHz; change the kernel to alter it")
+        self.tick_ms = 1000 // self.tick_hz
+        self.alarm_max_offset = int(sysd.get("alarm_max_offset", 32767))
+
+        stack = sysd.get("stack", {})
+        check_keys(stack, "stack", "system.stack")
+        self.stack_canary = int(stack.get("canary", 0xC5))
+        self.stack_guard = int(stack.get("guard_bytes", 8))
+        self.stack_margin = int(stack.get("paint_margin", 16))
+
+        hooks = sysd.get("hooks", {})
+        check_keys(hooks, "hooks", "system.hooks")
+        self.hook_startup = int(bool(hooks.get("startup", True)))
+        self.hook_error = int(bool(hooks.get("error", True)))
+        self.hook_shutdown = int(bool(hooks.get("shutdown", True)))
+
+        self.budget = sysd.get("budget")  # dict or None
+        if self.budget is not None:
+            check_keys(self.budget, "budget", "system.budget")
+
+        self.warnings = []
+
+        # ---- tasks ----------------------------------------------------
+        tasks = [Task(t) for t in doc.get("tasks", [])]
+        if not 1 <= len(tasks) <= 8:
+            fail("1..8 tasks required (8-bit ready mask)")
+        names = [t.name for t in tasks]
+        if len(set(names)) != len(names):
+            fail("duplicate task names")
+        for t in tasks:
+            t.compute_ticks(self.tick_ms)
+        self.tasks = tasks
+        self._assign_priorities()
+        by_name = {t.name: t for t in tasks}
+
+        # ---- alarms: one per periodic task, fastest first --------------
+        self.periodic = sorted((t for t in tasks if t.period_ms is not None),
+                               key=lambda t: t.period_ms)
+        for t in self.periodic:
+            if (t.period_ms % self.tick_ms) != 0:
+                fail(f"task {t.name}: period {t.period_ms} ms is not a "
+                     f"multiple of the {self.tick_ms} ms tick")
+            if t.period_ticks > self.alarm_max_offset:
+                fail(f"task {t.name}: period exceeds the "
+                     f"{self.alarm_max_offset}-tick alarm range")
+        if not self.periodic:
+            fail("at least one periodic task required (kernel needs >= 1 alarm)")
+
+        # ---- resources -------------------------------------------------
+        self.resources = [Resource(r, by_name)
+                          for r in doc.get("resources", [])]
+        rnames = [r.name for r in self.resources]
+        if len(set(rnames)) != len(rnames):
+            fail("duplicate resource names")
+        if not self.resources:
+            fail("at least one resource required (kernel config table "
+                 "cannot be empty); declare one for your main IPC/shared "
+                 "section even if unused")
+        if len(self.resources) > 8:
+            fail("max 8 resources (held-mask is 8-bit)")
+
+        # ---- pool ------------------------------------------------------
+        pool = doc.get("pool", {"block_size": 8, "blocks": 4})
+        check_keys(pool, "pool", "pool")
+        self.pool_block = int(pool.get("block_size", 8))
+        self.pool_blocks = int(pool.get("blocks", 4))
+        if not 1 <= self.pool_blocks <= 8:
+            fail("pool blocks must be 1..8 (8-bit allocation mask)")
+        if self.pool_block < 1:
+            fail("pool block_size must be >= 1 (free-list link byte)")
+
+        # ---- peripherals ------------------------------------------------
+        self.peripherals = doc.get("peripherals", {}) or {}
+        for p in self.peripherals:
+            if p not in KNOWN_PERIPHERALS:
+                hint = difflib.get_close_matches(str(p),
+                                                 KNOWN_PERIPHERALS, n=1)
+                extra = (f" (did you mean '{hint[0]}'?)" if hint else
+                         f" (known: {', '.join(sorted(KNOWN_PERIPHERALS))})")
+                fail(f"unknown peripheral '{p}'{extra}")
+        for a, b, why in CONFLICTS_HARD:
+            if a in self.peripherals and b in self.peripherals:
+                fail(f"peripheral conflict: {a} + {b} - {why}")
+
+        uart = self.peripherals.get("uart") or {}
+        if "uart" in self.peripherals:
+            check_keys(uart, "uart", "peripherals.uart")
+            for ring in ("tx_ring", "rx_ring"):
+                v = int(uart.get(ring, 128 if ring == "tx_ring" else 64))
+                if not (is_pow2(v) and 2 <= v <= 256):
+                    fail(f"uart {ring} must be a power of two, 2..256")
+
+        # ---- gpio + pin ownership matrix --------------------------------
+        self.gpio = self._parse_gpio(doc.get("gpio", []) or [])
+        self._check_pins()
+
+        # ---- sources / simulink ------------------------------------------
+        self.sources = list(doc.get("sources", [MAIN_C]))
+        self.simulink = doc.get("simulink")
+        if self.simulink is not None:
+            check_keys(self.simulink, "simulink", "simulink")
+            if "model" not in self.simulink:
+                fail("simulink section needs a 'model' name")
+
+        # ---- schedulability gate (codegen/README.md par.4) ---------------
+        base = self.periodic[0].period_ticks
+        load = sum(t.wcet_ticks for t in self.periodic)
+        if load > base:
+            fail(f"not schedulable: sum of periodic WCETs ({load} ticks) "
+                 f"exceeds the base period ({base} ticks); shorten WCETs, "
+                 "slow a rate, or merge runnables")
+        # harmonic-rate warning (keeps shared release points aligned)
+        for slow in self.periodic[1:]:
+            if (slow.period_ticks % base) != 0:
+                self.warnings.append(
+                    f"task {slow.name}: period is not a multiple of the "
+                    f"base period - release points drift apart")
+
+    def _parse_gpio(self, entries):
+        """Parse the gpio: list into normalized pin records."""
+        out = []
+        seen = set()
+        for e in entries:
+            check_keys(e, "gpio", "gpio entry")
+            if "pin" not in e:
+                fail("gpio entry: needs a 'pin'")
+            pin = normalize_pin(e["pin"])
+            if pin in seen:
+                fail(f"gpio: pin {pin} declared twice")
+            seen.add(pin)
+            direction = str(e.get("dir", "out")).lower()
+            if direction not in ("in", "out"):
+                fail(f"gpio {pin}: dir must be 'in' or 'out'")
+            out.append({
+                "pin": pin,
+                "dir": direction,
+                "pullup": bool(e.get("pullup", False)),
+                "name": e.get("name"),
+                "init": int(bool(e.get("init", False))),  # initial out level
+            })
+        return out
+
+    def _check_pins(self):
+        """Build a pin -> owner map across peripherals and gpio; any pin
+        claimed twice is a hard error (this subsumes most pair rules)."""
+        owner = {}
+
+        def claim(pin, who):
+            if pin in owner:
+                fail(f"pin conflict on {pin}: '{owner[pin]}' and '{who}' "
+                     "both claim it")
+            owner[pin] = who
+
+        for p in self.peripherals:
+            for pin in PERIPHERAL_PINS.get(p, []):
+                claim(pin, f"peripheral {p}")
+            # ADC channels are only claimed if the app lists them.
+            if p == "adc":
+                cfg = self.peripherals.get("adc") or {}
+                for ch in cfg.get("channels", []) or []:
+                    if 0 <= int(ch) <= 5:  # A6/A7 have no port pin
+                        claim(f"PC{int(ch)}", "peripheral adc")
+            # acomp with an external positive input also claims AIN0/PD6.
+            if p == "acomp":
+                cfg = self.peripherals.get("acomp") or {}
+                if str(cfg.get("positive", "bandgap")).lower() == "ain0":
+                    claim("PD6", "peripheral acomp (AIN0)")
+        for g in self.gpio:
+            claim(g["pin"], f"gpio {g['name'] or g['pin']}")
+
+    def _assign_priorities(self):
+        """Autostart init lowest, then aperiodic in listed order, then
+        periodic rate-monotonically (fastest = highest)."""
+        auto = [t for t in self.tasks if t.autostart]
+        aper = [t for t in self.tasks
+                if not t.autostart and t.period_ms is None]
+        peri = sorted((t for t in self.tasks if t.period_ms is not None),
+                      key=lambda t: -t.period_ms)  # slowest first
+        prio = 0
+        for t in auto + aper + peri:
+            t.priority = prio
+            prio += 1
+
+    # ordered helpers -----------------------------------------------------
+    @property
+    def tasks_by_prio(self):
+        return sorted(self.tasks, key=lambda t: t.priority)
+
+    @property
+    def alive_tasks(self):
+        return sorted((t for t in self.tasks if t.watchdog),
+                      key=lambda t: -t.priority)

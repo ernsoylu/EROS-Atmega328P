@@ -90,7 +90,7 @@ class Diagnostic:
 ### Phase 0 — Refactor, no new features (de-risks everything)
 - [x] Scaffold uv: `pyproject.toml` + `uv.lock` + `.python-version`; `.gitignore` += `.venv/`
 - [x] **Extend the golden-master net BEFORE splitting** — added `test_demos_makefile_golden` (reference-demo Makefile) + `test_genmain_skeleton_goldens` via `tools/fixtures/genmain/` (app.yaml + regen.py + 3 `.golden`). **All 6 emitters now pinned; 8/8 tests green** (`uv run pytest` + standalone).
-- [ ] Split `erosgen.py` into the package; **keep `tools/erosgen.py` as the invoked shim** so the Makefile's `python3 ../tools/erosgen.py` string is unchanged (byte-exact) and `test_erosgen.py`'s `import erosgen` still resolves
+- [x] Split `erosgen.py` into `tools/erosgen/` (errors/constants/paths/mcu/validate/model/emit/*/report/cli); `tools/erosgen.py` kept as shim (package shadows the module for `import erosgen`). `emit_makefile` now uses `paths.ENTRYPOINT` not `__file__` → Makefile byte-identical. Verified: 8/8 golden + zero git drift on a full reference-demo regen + exact CI cmd green.
 - [ ] Extract `Diagnostic` + non-throwing `validate.collect_diagnostics()`; `cli` does `sys.exit(1) if any(d.severity=="error")`
 - [ ] Externalize 328P tables into `mcu/atmega328p.yaml` + `MCUProfile` loader
       (`KNOWN_PERIPHERALS :45`, `PERIPHERAL_PINS :63`, `CONFLICTS_HARD :78`, `NANO_ALIASES :133`, `DRIVER_INIT :830`, `DRIVER_HEADER :841`)
