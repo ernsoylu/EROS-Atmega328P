@@ -2,11 +2,10 @@
 
 check_keys() is the highest-value guard (rejects typo'd keys with a "did you
 mean" hint). normalize_pin() canonicalizes Arduino Nano aliases to AVR pin
-names. is_pow2() backs the UART ring-size check.
+names. Both report through the Diagnostics sink so the same checks work in
+strict (raise) and collect (accumulate) modes; message text is unchanged.
 """
 import difflib
-
-from .errors import fail
 
 # Recognised keys per YAML section - anything else is a typo and is
 # rejected (with a "did you mean" hint). This is the highest-value
@@ -31,19 +30,23 @@ ALLOWED_KEYS = {
 }
 
 
-def check_keys(d, section, where):
-    """Reject unknown keys in a YAML mapping, suggesting the closest
-    valid key. `section` selects the allowed-key set; `where` names the
-    location for the error message."""
+def check_keys(d, section, where, sink):
+    """Reject unknown keys in a YAML mapping, suggesting the closest valid key.
+    `section` selects the allowed-key set; `where` names the location for the
+    error message. Returns True if the mapping is well-shaped enough to keep
+    inspecting (False after a non-mapping, so collect mode can skip it)."""
     if not isinstance(d, dict):
-        fail(f"{where}: expected a mapping, got {type(d).__name__}")
+        sink.error("BAD_MAPPING",
+                   f"{where}: expected a mapping, got {type(d).__name__}", where)
+        return False
     allowed = ALLOWED_KEYS[section]
     for k in d:
         if k not in allowed:
             hint = difflib.get_close_matches(str(k), allowed, n=1)
             suffix = f" (did you mean '{hint[0]}'?)" if hint else \
                      f" (valid: {', '.join(sorted(allowed))})"
-            fail(f"{where}: unknown key '{k}'{suffix}")
+            sink.error("UNKNOWN_KEY", f"{where}: unknown key '{k}'{suffix}", where)
+    return True
 
 
 def is_pow2(n):
@@ -60,12 +63,16 @@ for _a in range(6):  # A0..A5 double as PC0..PC5; A6/A7 are ADC-only
     NANO_ALIASES[f"A{_a}"] = f"PC{_a}"
 
 
-def normalize_pin(name):
-    """Return a canonical PORTxBIT pin name (e.g. 'PB5') from either an
-    AVR name or an Arduino Nano alias ('D13', 'A4')."""
+def normalize_pin(name, sink):
+    """Return a canonical PORTxBIT pin name (e.g. 'PB5') from either an AVR name
+    or an Arduino Nano alias ('D13', 'A4'). Returns None (collect mode) after an
+    unrecognized pin; in strict mode sink.error raises before returning."""
     p = str(name).upper()
     if p in NANO_ALIASES:
         return NANO_ALIASES[p]
     if (len(p) == 3 and p[0] == "P" and p[1] in "BCD" and p[2].isdigit()):
         return p
-    fail(f"unknown pin '{name}' (use PB0..PD7 or Nano D0..D13 / A0..A5)")
+    sink.error("UNKNOWN_PIN",
+               f"unknown pin '{name}' (use PB0..PD7 or Nano D0..D13 / A0..A5)",
+               "gpio")
+    return None

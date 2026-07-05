@@ -168,6 +168,31 @@ def test_bad_configs_are_rejected():
             raise AssertionError(f"{label}: expected ConfigError, got none")
 
 
+def test_collect_diagnostics_gathers_multiple_errors():
+    # collect mode is non-throwing and reports every independent problem at
+    # once (a GUI needs them all, not just the first that would raise).
+    text = BASE.replace("kernel_dir: ../kernel",
+                        "kernel_dir: ../kernel, drivers_dir: ../drivers") + """
+peripherals: { spi: {}, uarts: {} }
+gpio: [{ pin: D13, dir: out, name: LED }]
+tasks: [{ name: a, period_ms: 10, wcet_ms: 1 }]
+resources: [{ name: r, users: [a] }]
+"""
+    diags = erosgen.collect_diagnostics(yaml.safe_load(text), Path("app.yaml"))
+    codes = {d.code for d in diags}
+    assert "UNKNOWN_PERIPHERAL" in codes    # 'uarts'
+    assert "PIN_CONFLICT" in codes          # spi SCK on PB5 vs LED on D13/PB5
+    assert sum(d.severity == "error" for d in diags) >= 2
+    # every item is a structured Diagnostic, never a raised exception
+    assert all(isinstance(d, erosgen.Diagnostic) for d in diags)
+
+
+def test_collect_diagnostics_clean_for_reference_demo():
+    yml = REPO / "reference-demo" / "app.yaml"
+    diags = erosgen.collect_diagnostics(yaml.safe_load(yml.read_text()), yml)
+    assert [d for d in diags if d.severity == "error"] == []
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
