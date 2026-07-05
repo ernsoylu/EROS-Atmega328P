@@ -3,11 +3,8 @@
  * @brief   Test of the SPI master driver under simavr with a fixed slave.
  *
  * The host runner (--spi-slave 5A) models a slave that returns a constant
- * 0x5A on MISO for every transfer. simavr latches the received byte at
- * the start of each transfer, so a byte-echo slave would arrive one
- * transfer late; a pre-seeded constant byte is delivered on the same
- * transfer and is deterministic. Verifies init (master mode, SS high) and
- * that the polled-SPIF transfer path clocks the MISO byte in.
+ * 0x5A on MISO for every transfer. Verifies init (master mode, SS high)
+ * and that the polled-SPIF transfer path clocks the MISO byte in.
  */
 
 #include <avr/io.h>

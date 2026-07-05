@@ -78,11 +78,13 @@ static void uart_out_cb(struct avr_irq_t *irq, uint32_t value, void *param)
 }
 
 /* --- SPI slave: return a fixed byte on MISO ------------------------ */
-/* simavr latches the received byte from the SPI INPUT irq at the START
- * of a transfer, before this OUTPUT hook runs - so an "echo the byte
- * just sent" slave would deliver each byte one transfer late. A constant
- * slave (pre-seeded before the run, then re-asserted after every byte)
- * is delivered on the same transfer and is deterministic. */
+/* simavr completes a master transfer by raising SPI OUTPUT (with SPDR's
+ * contents); a slave then drives MISO by raising SPI INPUT, which simavr
+ * writes into SPDR before the master reads it. Returning a constant byte
+ * (rather than echoing the sent byte) is deterministic and independent of
+ * whether the installed simavr leaves the sent byte in SPDR.
+ * NOTE: the SPI instance name is 0 (AVR_SPI_DECLARE leaves .name unset),
+ * not '0' like the UART - AVR_IOCTL_SPI_GETIRQ(0) is required. */
 
 static avr_t *g_avr = NULL;
 
@@ -92,7 +94,7 @@ static struct spi_slave g_spi = { 0, 0 };
 static void spi_slave_cb(struct avr_irq_t *irq, uint32_t value, void *param)
 {
     (void)irq; (void)value; (void)param;
-    avr_raise_irq(avr_io_getirq(g_avr, AVR_IOCTL_SPI_GETIRQ('0'),
+    avr_raise_irq(avr_io_getirq(g_avr, AVR_IOCTL_SPI_GETIRQ(0),
                                 SPI_IRQ_INPUT), g_spi.byte);
 }
 
@@ -303,15 +305,12 @@ int main(int argc, char **argv)
      * for our small, promptly-drained bursts. */
 
     if (g_spi.active)
-    {
-        /* Seed the MISO byte for the first transfer, then re-assert it
-         * after each byte so every transfer returns the same value. */
-        avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ('0'),
-                                    SPI_IRQ_INPUT), g_spi.byte);
+        /* On each completed transfer (SPI OUTPUT), the slave drives the
+         * constant byte onto MISO (SPI INPUT), which simavr latches into
+         * SPDR before the master reads it back. */
         avr_irq_register_notify(
-            avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ('0'), SPI_IRQ_OUTPUT),
+            avr_io_getirq(avr, AVR_IOCTL_SPI_GETIRQ(0), SPI_IRQ_OUTPUT),
             spi_slave_cb, NULL);
-    }
 
     for (int i = 0; i < g_nadc; i++)
         avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_ADC_GETIRQ,
