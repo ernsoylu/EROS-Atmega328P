@@ -2,7 +2,22 @@
  * @file    main.c
  * @brief   EROS demonstration application (Arduino Nano / ATmega328P).
  *
- * Demonstrates every kernel feature:
+ * Integration layer only: hooks, the one-shot init task and main().
+ * The application software (ASW) lives in one C/H pair per task rate -
+ * the same structure recommended for Simulink / Embedded Coder
+ * multitasking output in codegen/README.md:
+ *
+ *   asw_10ms.c   TASK_FAST   scope channel PD2 + mailbox consumer
+ *   asw_50ms.c   TASK_MED    scope channel PD3 + pool/mailbox producer
+ *   asw_500ms.c  TASK_SLOW   scope channel PD4 + ChainTask demo, and
+ *                TASK_REPORT the chained 2 s heartbeat (PD5)
+ *   asw_ipc.h    the producer->consumer payload protocol + the
+ *                concurrency rationale (why no mutexes are needed on
+ *                this non-preemptive kernel)
+ *   actuator.c/h polymorphic GPIO driver - OOP-in-C, instances and
+ *                vtables 100% in Flash (PROGMEM, deviation D4)
+ *
+ * Demonstrated kernel features:
  *
  *  1. Three periodic alarms toggling distinct GPIOs so release jitter can
  *     be measured with a scope (each toggle is a single atomic PINx write):
@@ -28,61 +43,17 @@
  *
  *  4. ChainTask: every 4th run, TASK_SLOW chains TASK_REPORT (heartbeat
  *     LED toggle every 2 s).
- *
- * OOP-in-C pattern: the GPIO "actuator" driver below is polymorphic with
- * ZERO RAM cost - both the object instances and their vtables are const
- * PROGMEM, fetched with pgm_read_ptr()/pgm_read_byte() (deviation D4).
  */
 
 #include <avr/io.h>
 #include <avr/pgmspace.h>
 
 #include "eros.h"
+#include "actuator.h"
 
-/* ================================================================== */
-/* Polymorphic GPIO actuator - instances and vtables 100% in Flash     */
-/* ================================================================== */
-
-typedef void (*ActuatorWriteFn)(uint8_t mask);
-
-/** Actuator vtable ("interface"). Lives in PROGMEM - never in RAM. */
-typedef struct
-{
-    ActuatorWriteFn trigger;
-} ActuatorOpsType;
-
-/** Actuator instance: vtable pointer + pin mask. Also PROGMEM. */
-typedef struct
-{
-    const ActuatorOpsType *ops; /* -> PROGMEM vtable */
-    uint8_t                mask;
-} ActuatorType;
-
-/* Two concrete implementations => real polymorphism.
- * Writing 1 to a PINx register toggles the PORTx bit in hardware
- * (ATmega328P datasheet 14.2.2) - a single atomic store, so these are
- * safe from any context, including ErrorHook in the tick ISR. */
-static void Actuator_ToggleD(uint8_t mask) { PIND = mask; }
-static void Actuator_ToggleB(uint8_t mask) { PINB = mask; }
-
-static const ActuatorOpsType actOpsPortD PROGMEM = { Actuator_ToggleD };
-static const ActuatorOpsType actOpsPortB PROGMEM = { Actuator_ToggleB };
-
-static const ActuatorType actFast   PROGMEM = { &actOpsPortD, (1u << PD2) };
-static const ActuatorType actMed    PROGMEM = { &actOpsPortD, (1u << PD3) };
-static const ActuatorType actSlow   PROGMEM = { &actOpsPortD, (1u << PD4) };
-static const ActuatorType actReport PROGMEM = { &actOpsPortD, (1u << PD5) };
-static const ActuatorType actLed    PROGMEM = { &actOpsPortB, (1u << PB5) };
-
-/** Virtual dispatch: instance -> vtable -> method, all read from Flash. */
-static void Actuator_Trigger(const ActuatorType *self)
-{
-    const ActuatorOpsType *const ops =
-        (const ActuatorOpsType *)pgm_read_ptr(&self->ops);
-    const ActuatorWriteFn fn = (ActuatorWriteFn)pgm_read_ptr(&ops->trigger);
-
-    fn(pgm_read_byte(&self->mask));
-}
+/** Hook-owned actuator: the on-board LED belongs to the hooks only. */
+static const ActuatorType actLed PROGMEM = { &Actuator_OpsPortB,
+                                             (1u << PB5) };
 
 /* ================================================================== */
 /* Application state (RAM - counted as application, not kernel)        */
@@ -90,10 +61,6 @@ static void Actuator_Trigger(const ActuatorType *self)
 
 static volatile StatusType appLastError;   /* written from ISR context   */
 static volatile uint8_t    appErrorCount;
-static uint8_t             appTxSequence;  /* producer payload sequence  */
-static uint8_t             appRxGood;      /* verified messages received */
-static uint8_t             appRxBad;       /* payload integrity failures */
-static uint8_t             appSlowRuns;    /* ChainTask divider          */
 
 /* ================================================================== */
 /* Hooks (all three enabled in config.h)                               */
@@ -127,7 +94,7 @@ void ShutdownHook(StatusType error)
 }
 
 /* ================================================================== */
-/* Tasks (see config.h for the priority map and WCET budget table)     */
+/* Init task (see config.h for the priority map and WCET budgets)      */
 /* ================================================================== */
 
 /**
@@ -150,119 +117,6 @@ void Task_Init(void)
      * second finds it READY -> E_OS_LIMIT -> ErrorHook pulses the LED. */
     (void)ActivateTask(TASK_REPORT);   /* E_OK                        */
     (void)ActivateTask(TASK_REPORT);   /* E_OS_LIMIT (intentional)    */
-
-    TerminateTask();
-}
-
-/**
- * TASK_REPORT - heartbeat on PD5 (D5), toggled every 2 s. Activated once
- * at startup (double-activation demo) and afterwards chained by every
- * 4th TASK_SLOW run. PD5 is deliberately NOT the on-board LED: PB5 is
- * reserved for ErrorHook/ShutdownHook so the boot-time E_OS_LIMIT
- * demonstration stays visible instead of being toggled away microseconds
- * later by this task.
- */
-void Task_Report(void)
-{
-    Actuator_Trigger(&actReport);
-    TerminateTask();
-}
-
-/**
- * TASK_SLOW - 500 ms period. Scope channel PD4 (1 Hz square wave).
- * Demonstrates ChainTask(): every 4th run chains TASK_REPORT.
- */
-void Task_Slow(void)
-{
-    Actuator_Trigger(&actSlow);
-
-    appSlowRuns++;
-    if ((appSlowRuns & 0x03u) == 0u)
-    {
-        (void)ChainTask(TASK_REPORT); /* executed when we return */
-    }
-    TerminateTask();
-}
-
-/**
- * TASK_MED - 50 ms period, producer. Scope channel PD3 (10 Hz).
- * Allocates a pool block, fills it with a checkable payload and posts
- * the handle into the mailbox under the RES_DEMO IPCP resource.
- */
-void Task_Med(void)
-{
-    OsPoolHandleType handle;
-
-    Actuator_Trigger(&actMed);
-
-    handle = OS_PoolAlloc();
-    if (handle != OS_POOL_INVALID_HANDLE)
-    {
-        uint8_t *const payload = (uint8_t *)OS_PoolPtr(handle);
-
-        appTxSequence++;
-        payload[0] = appTxSequence;
-        payload[1] = (uint8_t)~appTxSequence; /* integrity complement */
-
-        if (GetResource(RES_DEMO) == E_OK)
-        {
-            if (OS_MailboxSend(handle) != E_OK)
-            {
-                /* Mailbox still full (consumer behind): we keep block
-                 * ownership, so return it - no leak, no fragmentation. */
-                (void)OS_PoolFree(handle);
-            }
-            (void)ReleaseResource(RES_DEMO); /* LIFO order */
-        }
-        else
-        {
-            (void)OS_PoolFree(handle);
-        }
-    }
-    /* Pool exhausted: drop this cycle's sample (bounded, deterministic). */
-
-    TerminateTask();
-}
-
-/**
- * TASK_FAST - 10 ms period, consumer + highest priority. Scope channel
- * PD2 (50 Hz). Polls the mailbox under RES_DEMO, verifies the payload
- * and frees the block, completing the block's alloc->send->receive->free
- * life cycle.
- */
-void Task_Fast(void)
-{
-    OsPoolHandleType handle = OS_POOL_INVALID_HANDLE;
-    StatusType       status;
-
-    Actuator_Trigger(&actFast);
-
-    if (GetResource(RES_DEMO) == E_OK)
-    {
-        status = OS_MailboxReceive(&handle);
-        (void)ReleaseResource(RES_DEMO);
-
-        if (status == E_OK)
-        {
-            const uint8_t *const payload =
-                (const uint8_t *)OS_PoolPtr(handle);
-            const uint8_t expected =
-                (payload != (const uint8_t *)0) ? (uint8_t)~payload[0] : 0u;
-
-            if ((payload != (const uint8_t *)0) &&
-                (payload[1] == expected))
-            {
-                appRxGood++;
-            }
-            else
-            {
-                appRxBad++;
-            }
-            (void)OS_PoolFree(handle);
-        }
-        /* E_OS_NOFUNC (empty) is the normal case 4 out of 5 polls:
-         * the producer runs at a fifth of our rate. */
-    }
 
     TerminateTask();
 }

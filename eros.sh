@@ -214,9 +214,11 @@ do_build() {
     local od="$BUILD_DIR/eros"; mkdir -p "$od"
     say "reference demo (eros):"
     local objs=()
-    objs+=("$(compile "$SCRIPT_DIR/main.c"        "$od" "$SCRIPT_DIR" "$SCRIPT_DIR/kernel")")
+    local rs
+    for rs in main.c actuator.c asw_10ms.c asw_50ms.c asw_500ms.c config.c; do
+        objs+=("$(compile "$SCRIPT_DIR/$rs" "$od" "$SCRIPT_DIR" "$SCRIPT_DIR/kernel")")
+    done
     objs+=("$(compile "$SCRIPT_DIR/kernel/eros.c" "$od" "$SCRIPT_DIR" "$SCRIPT_DIR/kernel")")
-    objs+=("$(compile "$SCRIPT_DIR/config.c"      "$od" "$SCRIPT_DIR" "$SCRIPT_DIR/kernel")")
     link_hex eros "$od" "${objs[@]}"
     budget_check
 
@@ -226,7 +228,8 @@ do_build() {
     say "comprehensive demo (demo):"
     local objs2=()
     local s
-    for s in main.c uart.c pwm.c config.c; do
+    for s in main.c asw_signals.c asw_10ms.c asw_50ms.c asw_100ms.c \
+             asw_500ms.c uart.c pwm.c config.c; do
         objs2+=("$(compile "$cd_/$s" "$od2" "$cd_" "$SCRIPT_DIR/kernel")")
     done
     objs2+=("$(compile "$SCRIPT_DIR/kernel/eros.c" "$od2" "$cd_" "$SCRIPT_DIR/kernel")")

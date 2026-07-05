@@ -3,6 +3,21 @@
  * @brief   Comprehensive demo - GPIO, serial console, PWM and IPC
  *          integrated on the EROS OSEK BCC1 kernel (../kernel).
  *
+ * Integration layer only: hooks, the one-shot startup task and main().
+ * The application software (ASW) lives in one C/H pair per task rate -
+ * the same structure recommended for Simulink / Embedded Coder
+ * multitasking output in ../codegen/README.md:
+ *
+ *   asw_10ms.c    TASK_BUTTON  debounced push button (PD2/D2)
+ *   asw_50ms.c    TASK_CMD     serial command parser (ON/OFF/STAT)
+ *   asw_100ms.c   TASK_RAMP    Timer1 PWM breathing LED (PB1/D9)
+ *   asw_500ms.c   TASK_STATUS  heartbeat LED (PB5/D13) + status line
+ *   asw_signals.c cross-rate signals ("rate transition" layer) +
+ *                 shared status print - see asw_signals.h for the
+ *                 concurrency contract (why no mutexes are needed on
+ *                 this non-preemptive kernel, and where they would
+ *                 attach if that ever changes)
+ *
  * Hardware (Arduino Nano):
  *   PB5 / D13 : heartbeat LED, toggled every 500 ms
  *   PD2 / D2  : push button to GND, internal pull-up
@@ -26,32 +41,11 @@
 
 #include <avr/io.h>
 #include <avr/pgmspace.h>
-#include <string.h>
 
 #include "eros.h"
+#include "asw_signals.h"
 #include "uart.h"
 #include "pwm.h"
-
-/* ------------------------------------------------------------------ */
-/* Application state (all task-level; no ISR access except appLast/    */
-/* appErrorCount, which ErrorHook may touch from the tick ISR)         */
-/* ------------------------------------------------------------------ */
-
-#define EVT_BUTTON_PRESS  0xB7u
-
-#define RAMP_STEP_PERMILLE 50u /* 100 ms steps -> 4 s full breathe cycle */
-
-static volatile StatusType appLastError;
-static volatile uint8_t    appErrorCount;
-
-static uint8_t  appRampRun = 1u;  /* 1 = breathing, 0 = frozen          */
-static uint8_t  appRampUp  = 1u;
-static uint16_t appDuty;
-
-static uint8_t  appBtnHistory = 0xFFu; /* pull-up: idle reads 1         */
-
-static char     appCmdBuf[12];
-static uint8_t  appCmdLen;
 
 /* ------------------------------------------------------------------ */
 /* Hooks                                                               */
@@ -69,11 +63,11 @@ void StartupHook(void)
 
 /** May run in tick-ISR context (e.g. deadline miss). It must therefore
  *  stay tiny and MUST NOT print: the UART driver's rings are strictly
- *  single-producer and the producer side belongs to task level. */
+ *  single-producer and the producer side belongs to task level.
+ *  Asw_RecordError() is ISR-safe by construction (two byte stores). */
 void ErrorHook(StatusType error)
 {
-    appLastError = error;
-    appErrorCount++;
+    Asw_RecordError(error);
 }
 
 /** Terminal failure tombstone: heartbeat LED solid ON. */
@@ -85,32 +79,7 @@ void ShutdownHook(StatusType error)
 }
 
 /* ------------------------------------------------------------------ */
-/* Shared print helper (task level only)                               */
-/* ------------------------------------------------------------------ */
-
-/** Status line, grouped under RES_UART so the multi-part write is one
- *  logical unit (conformance demo - see config.h note). */
-static void PrintStatus(void)
-{
-    (void)GetResource(RES_UART);
-    UART_Print_P(PSTR("t="));
-    UART_PrintU16(GetCounterValue());
-    UART_Print_P(PSTR(" duty="));
-    UART_PrintU16(PWM_GetDutyPermille());
-    UART_Print_P(PSTR(" run="));
-    (void)UART_PutChar((appRampRun != 0u) ? '1' : '0');
-    UART_Print_P(PSTR(" err="));
-    UART_PrintU16((uint16_t)appErrorCount);
-    UART_Print_P(PSTR(" lastE="));
-    UART_PrintHex8(appLastError);
-    UART_Print_P(PSTR(" txDrop="));
-    UART_PrintU16((uint16_t)UART_TxDropped());
-    UART_Print_P(PSTR("\r\n"));
-    (void)ReleaseResource(RES_UART);
-}
-
-/* ------------------------------------------------------------------ */
-/* Tasks                                                               */
+/* Startup task                                                        */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -132,165 +101,6 @@ void Task_Startup(void)
     (void)SetRelAlarm(ALARM_RAMP,   100u, 100u);
     (void)SetRelAlarm(ALARM_STATUS, 500u, 500u);
 
-    TerminateTask();
-}
-
-/**
- * TASK_BUTTON - 10 ms. Debounce via 8-sample shift register: a press
- * event fires exactly once when the pin has read LOW for 7 consecutive
- * samples after having been HIGH (history == 0x80). The event is posted
- * to TASK_CMD as a pool block through the single-slot mailbox.
- */
-void Task_Button(void)
-{
-    const uint8_t raw = ((PIND & (uint8_t)(1u << PD2)) != 0u) ? 1u : 0u;
-
-    appBtnHistory = (uint8_t)((uint8_t)(appBtnHistory << 1) | raw);
-
-    if (appBtnHistory == 0x80u) /* debounced falling edge = press */
-    {
-        const OsPoolHandleType h = OS_PoolAlloc();
-
-        if (h != OS_POOL_INVALID_HANDLE)
-        {
-            uint8_t *const payload = (uint8_t *)OS_PoolPtr(h);
-
-            payload[0] = EVT_BUTTON_PRESS;
-            if (OS_MailboxSend(h) != E_OK)
-            {
-                (void)OS_PoolFree(h); /* mailbox full: drop the event */
-            }
-        }
-    }
-    TerminateTask();
-}
-
-/**
- * TASK_CMD - 50 ms. Two input sources:
- *   1. button events arriving via mailbox (from TASK_BUTTON),
- *   2. serial characters from the RX ring (from the Category-1 RX ISR),
- *      echoed and line-buffered, then parsed: ON / OFF / STAT.
- * Character intake is capped per activation to bound the WCET; the cap
- * equals the RX ring size, which itself exceeds the worst-case number
- * of bytes 9600 baud can deliver per period (48), so pasted input is
- * never dropped.
- */
-void Task_Cmd(void)
-{
-    OsPoolHandleType h;
-    uint8_t          budget;
-    char             c;
-
-    /* --- 1. button events ----------------------------------------- */
-    if (OS_MailboxReceive(&h) == E_OK)
-    {
-        const uint8_t *const payload = (const uint8_t *)OS_PoolPtr(h);
-
-        if ((payload != (const uint8_t *)0) &&
-            (payload[0] == EVT_BUTTON_PRESS))
-        {
-            appRampRun = (appRampRun != 0u) ? 0u : 1u;
-            UART_Print_P((appRampRun != 0u) ? PSTR("BTN -> RUN\r\n")
-                                            : PSTR("BTN -> HOLD\r\n"));
-        }
-        (void)OS_PoolFree(h);
-    }
-
-    /* --- 2. serial command intake. The cap bounds the WCET; 64 (the
-     * RX ring size) is the natural upper limit and outruns the wire:
-     * 9600 baud delivers at most 48 bytes per 50 ms period. ---------- */
-    for (budget = 64u; (budget != 0u) && (UART_GetChar(&c) != 0u); budget--)
-    {
-        if ((c == '\r') || (c == '\n'))
-        {
-            if (appCmdLen != 0u) /* ignore bare line endings */
-            {
-                appCmdBuf[appCmdLen] = '\0';
-                appCmdLen = 0u;
-
-                UART_Print_P(PSTR("\r\n"));
-                if (strcmp_P(appCmdBuf, PSTR("ON")) == 0)
-                {
-                    appRampRun = 1u;
-                    UART_Print_P(PSTR("ramp ON\r\n"));
-                }
-                else if (strcmp_P(appCmdBuf, PSTR("OFF")) == 0)
-                {
-                    appRampRun = 0u;
-                    appDuty    = 0u;
-                    appRampUp  = 1u;
-                    PWM_SetDutyPermille(0u);
-                    UART_Print_P(PSTR("ramp OFF\r\n"));
-                }
-                else if (strcmp_P(appCmdBuf, PSTR("STAT")) == 0)
-                {
-                    PrintStatus();
-                }
-                else
-                {
-                    UART_Print_P(PSTR("unknown command\r\n"));
-                }
-            }
-        }
-        else if ((c >= ' ') && (c <= '~')) /* printable ASCII only */
-        {
-            (void)UART_PutChar(c); /* echo */
-            if (appCmdLen < (uint8_t)(sizeof(appCmdBuf) - 1u))
-            {
-                appCmdBuf[appCmdLen] = c;
-                appCmdLen++;
-            }
-        }
-        else
-        {
-            /* control characters other than CR/LF are ignored */
-        }
-    }
-    TerminateTask();
-}
-
-/**
- * TASK_RAMP - 100 ms. Triangle ramp 0..1000 permille -> 4 s breathing
- * cycle on the PWM LED (D9) while running.
- */
-void Task_Ramp(void)
-{
-    if (appRampRun != 0u)
-    {
-        if (appRampUp != 0u)
-        {
-            appDuty += RAMP_STEP_PERMILLE;
-            if (appDuty >= 1000u)
-            {
-                appDuty   = 1000u;
-                appRampUp = 0u;
-            }
-        }
-        else
-        {
-            if (appDuty <= RAMP_STEP_PERMILLE)
-            {
-                appDuty   = 0u;
-                appRampUp = 1u;
-            }
-            else
-            {
-                appDuty -= RAMP_STEP_PERMILLE;
-            }
-        }
-        PWM_SetDutyPermille(appDuty);
-    }
-    TerminateTask();
-}
-
-/**
- * TASK_STATUS - 500 ms. Heartbeat (no delay loop: atomic PINx
- * toggle instead of a delay loop) plus the periodic status report.
- */
-void Task_Status(void)
-{
-    PINB = (uint8_t)(1u << PB5); /* hardware toggle, single atomic store */
-    PrintStatus();
     TerminateTask();
 }
 

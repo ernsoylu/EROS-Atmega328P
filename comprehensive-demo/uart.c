@@ -12,17 +12,38 @@
 
 #include "uart.h"
 
+/* Baud and ring sizes are overridable from the build system (the
+ * erosgen configurator emits -D flags from app.yaml); the defaults
+ * below preserve the original driver behaviour. */
+#ifndef UART_BAUD
 #define UART_BAUD      9600UL
+#endif
 #define UART_UBRR      ((F_CPU / (16UL * UART_BAUD)) - 1UL)
 
-/* Ring sizes must be powers of two (index arithmetic uses masks).
- * RX is sized so that pasted input survives: at 9600 baud a full 50 ms
- * command-task period delivers at most 48 bytes, and 48 < 63 usable
- * slots, so no byte is lost even during a continuous paste as long as
- * the consumer drains the ring every period. */
-#define TX_SIZE        128u
+/* Ring sizes must be powers of two (index arithmetic uses masks) and
+ * fit the 8-bit indices (2..256). RX is sized so that pasted input
+ * survives: at 9600 baud a full 50 ms command-task period delivers at
+ * most 48 bytes, and 48 < 63 usable slots, so no byte is lost even
+ * during a continuous paste as long as the consumer drains the ring
+ * every period. Rings are the dominant application RAM cost - size
+ * them to the wire math, not generously. */
+#ifndef UART_TX_SIZE
+#define UART_TX_SIZE   128u
+#endif
+#ifndef UART_RX_SIZE
+#define UART_RX_SIZE   64u
+#endif
+
+#if (UART_TX_SIZE & (UART_TX_SIZE - 1u)) != 0u || (UART_TX_SIZE > 256u)
+#error "UART_TX_SIZE must be a power of two, 2..256"
+#endif
+#if (UART_RX_SIZE & (UART_RX_SIZE - 1u)) != 0u || (UART_RX_SIZE > 256u)
+#error "UART_RX_SIZE must be a power of two, 2..256"
+#endif
+
+#define TX_SIZE        UART_TX_SIZE
 #define TX_MASK        (TX_SIZE - 1u)
-#define RX_SIZE        64u
+#define RX_SIZE        UART_RX_SIZE
 #define RX_MASK        (RX_SIZE - 1u)
 
 /* TX: tasks produce (head), UDRE ISR consumes (tail). */

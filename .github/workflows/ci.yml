@@ -1,0 +1,117 @@
+# =====================================================================
+# EROS CI: build + memory budget, simavr peripheral tests, qemu boot.
+#
+# Renode has no AVR core, so the ATmega328P firmware is executed under
+# simavr (the AVR-native simulator) instead. See tests/README.md.
+# =====================================================================
+name: ci
+
+on:
+  push:
+    branches: [ main, "claude/**", "ci/**" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------
+  # Stage 1 - build every target and enforce the flash/RAM budget.
+  # -------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install AVR toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-avr avr-libc binutils-avr python3
+
+      - name: Codegen unit tests (erosgen golden + budget checks)
+        run: python3 tools/test_erosgen.py
+
+      - name: Build root demo + memory budget
+        run: make all
+
+      - name: Build comprehensive-demo
+        run: make -C comprehensive-demo
+
+      - name: Driver compile gate (-Werror, all peripherals)
+        run: make -C drivers
+
+      - name: ASW + RTE compile gate (-Werror, generated model untouched)
+        run: |
+          avr-gcc -Wall -Wextra -Werror -std=c99 -Os -flto \
+            -ffunction-sections -fdata-sections -fno-common \
+            -mmcu=atmega328p -DF_CPU=16000000UL \
+            -Idrivers -Irte -Icodegen/appKnbSwt_ert_rtw \
+            -c rte/Rte.c \
+               codegen/appKnbSwt_ert_rtw/appKnbSwt.c \
+               codegen/appKnbSwt_ert_rtw/appKnbSwt_Intfc.c \
+               codegen/appKnbSwt_ert_rtw/appKnbSwt_Param.c
+          rm -f *.o
+
+  # -------------------------------------------------------------------
+  # Stage 2 - execute peripheral drivers in simavr and assert behaviour.
+  # -------------------------------------------------------------------
+  sim:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install AVR toolchain + simavr
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-avr avr-libc binutils-avr libsimavr-dev simavr libelf-dev
+
+      - name: Build test firmware + host runner
+        run: make -C tests all
+
+      - name: Deterministic peripheral tests (gating)
+        run: make -C tests test-pure
+
+      - name: Stimulus peripheral tests (non-gating until hardened)
+        run: make -C tests test-stim
+
+      - name: Simulink model ASW->RTE->BSW sweep (observable, non-gating)
+        continue-on-error: true
+        # Knob on A0 swept 1023->0->1023 over 10 s; the DO pin trace and
+        # the on-chip threshold self-check are printed to the log.
+        run: make -C tests test-model_knbswt
+
+  # -------------------------------------------------------------------
+  # Stage 3 - independent boot/run smoke on qemu-system-avr.
+  # -------------------------------------------------------------------
+  smoke:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install AVR toolchain + qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-avr avr-libc binutils-avr qemu-system-misc
+
+      - name: Build firmware
+        run: |
+          make all
+          make -C comprehensive-demo
+
+      - name: Boot smoke (survives 3s of guest time without crashing)
+        run: |
+          set +e
+          timeout 3 qemu-system-avr -machine uno -nographic \
+            -serial null -bios comprehensive-demo/*.elf
+          rc=$?
+          # timeout(1) returns 124 when it had to kill a still-running
+          # guest - that is exactly what "it booted and kept running"
+          # looks like. Any other non-zero is an early guest crash.
+          if [ $rc -eq 124 ] || [ $rc -eq 0 ]; then
+            echo "boot smoke OK (qemu rc=$rc)"; exit 0
+          else
+            echo "::error::qemu exited early (rc=$rc)"; exit 1
+          fi

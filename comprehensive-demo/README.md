@@ -21,6 +21,32 @@ grouped under the `RES_UART` **resource**, the **watchdog** supervises
 all four periodic tasks, and the boot banner prints the **reset cause**
 captured in `.init3` (`os_resetCause`).
 
+## File layout — one C file per task rate
+
+The ASW is split by rate, mirroring the Simulink/Embedded Coder
+structure documented in `../codegen/README.md` §4:
+
+```
+main.c          integration layer: hooks + startup task + main()
+asw_10ms.c/.h   TASK_BUTTON  debounced push button
+asw_50ms.c/.h   TASK_CMD     serial command parser + button events
+asw_100ms.c/.h  TASK_RAMP    PWM triangle ramp (owns the ramp state,
+                             exports Asw_RampReset())
+asw_500ms.c/.h  TASK_STATUS  heartbeat LED + periodic status line
+asw_signals.c/.h  cross-rate signals ("rate transition" layer) +
+                  the shared status print
+uart.c/.h pwm.c/.h  drivers   config.h/.c  static OS configuration
+```
+
+State that only one rate touches stays `static` inside that rate's
+file. Everything that crosses a rate boundary goes through the
+`asw_signals` accessors or kernel IPC — never through shared globals.
+No mutex/semaphore is needed for task↔task data on this
+**non-preemptive run-to-completion** kernel (tasks can never
+interleave); `asw_signals.h` documents the full concurrency contract,
+including the `volatile`/`ATOMIC_BLOCK` rules for ISR-shared data and
+where locking would attach if the kernel ever became preemptive.
+
 ## Wiring
 
 ```

@@ -1,5 +1,13 @@
 # Embedding Simulink-generated code on EROS
 
+> **Integration lives in `rte/`, not here.** Generated code in this folder
+> is the **ASW** and is kept frozen. The hand-written binding to the
+> drivers and OS (port data flow, calibration, runnable→task scheduling)
+> is the **RTE** layer in [`rte/`](../rte/README.md) — the worked example
+> (`appKnbSwt`) and the future `erosgen` generation schema are documented
+> there. The §3–§5 "glue in codegen/" pattern below is the earlier
+> approach, superseded by the ASW→RTE→BSW layering.
+
 This folder receives C code generated from Simulink models (Embedded
 Coder, `ert.tlc`) and documents the contract between a model and the
 **EROS** (Embedded Realtime Operating System) scheduler: how to
@@ -136,29 +144,22 @@ Available drivers and how to bind them:
   OC1A/PB1 (D9); `PWM_SetDutyPermille(uint16 0..1000)`, true-off at 0.
   OC1B/PB2 (D10) can be added the same way. **Timer2 is the OS tick —
   drivers must never touch it**; Timer0 is still free.
-- **ADC** — no driver in the repo yet; the canonical blocking read
-  (~110 µs at the standard 125 kHz ADC clock, fine inside a task) is:
-
-```c
-void ADC_Init(void)          /* call from StartupHook() */
-{
-    ADMUX  = (1u << REFS0);                /* AVcc reference        */
-    ADCSRA = (1u << ADEN) | (1u << ADPS2)  /* enable, /128 presc.   */
-           | (1u << ADPS1) | (1u << ADPS0);
-}
-
-uint16_t ADC_Read(uint8_t channel)         /* A0..A7 -> 0..1023 */
-{
-    ADMUX = (uint8_t)((ADMUX & 0xF0u) | (channel & 0x0Fu));
-    ADCSRA |= (1u << ADSC);
-    while ((ADCSRA & (1u << ADSC)) != 0u) { /* ~13 ADC cycles */ }
-    return ADC;
-}
-```
+- **ADC** — `drivers/adc.c`: blocking single conversions (~104 µs at
+  the standard 125 kHz ADC clock, fine inside a task), AVcc reference,
+  plus Vcc-measurement and raw temperature internal channels.
+  `ADC_Init()` from `StartupHook()`, `ADC_Read(ch)` in the glue.
 
 - **UART** — `comprehensive-demo/uart.c` (interrupt-driven,
   non-blocking) for telemetry/tuning. Print from a *slow* housekeeping
   task, never from control rates or hooks.
+
+- **Everything else** — `drivers/` completes the peripheral coverage
+  (EEPROM parameter storage, I2C/SPI for external sensors and
+  actuators, INT/PCINT event counting, Timer0 PWM, Timer1 input
+  capture, analog comparator). Pin maps, WCETs for the `wcet_ticks`
+  budgets, ISR categories and resource conflicts (e.g. Timer1 capture
+  vs Timer1 PWM) are tabulated in `drivers/README.md`; integration
+  uses the same `VPATH`/`SRCS` recipe as §5.
 
 Sampling in-task (not in ISRs) keeps every ISR in this system Category
 1/2 compliant: generated step functions must never be called from an

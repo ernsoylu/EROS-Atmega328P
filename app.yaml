@@ -1,0 +1,56 @@
+# =====================================================================
+# EROS reference demo - system configuration (the "OIL file").
+# Regenerate config.h/config.c/Makefile with:
+#   python3 tools/erosgen.py app.yaml
+# main.c and the asw_*.c rate files are generated once, then owned by
+# you (never overwritten).
+# =====================================================================
+
+system:
+  name: eros
+  kernel_dir: kernel          # kernel lives in ./kernel for this app
+  tick_hz: 1000
+  hooks: { startup: true, error: true, shutdown: true }
+  budget: { flash: 3072, ram: 128, sram_total: 2048 }
+
+# Sources owned by the application (not peripheral drivers). The ASW is
+# split one file per rate; actuator.c is the shared polymorphic GPIO
+# driver; asw_ipc.h is header-only so it is not listed.
+sources:
+  - main.c
+  - actuator.c
+  - asw_10ms.c
+  - asw_50ms.c
+  - asw_500ms.c
+
+# No hardware peripheral drivers: this demo only toggles GPIOs (via
+# actuator.c) and uses kernel IPC. Nothing else is compiled in.
+peripherals: {}
+
+tasks:
+  - name: init
+    autostart: true
+    wcet_ms: 2                # one-shot: arm alarms + demo activations
+  - name: report             # aperiodic: chained by TASK_SLOW every 4th run
+    wcet_ms: 1
+  - name: slow
+    period_ms: 500
+    wcet_ms: 1
+    runnables: [Asw_Slow]
+  - name: med
+    period_ms: 50
+    wcet_ms: 1
+    runnables: [Asw_Med]
+  - name: fast
+    period_ms: 10
+    wcet_ms: 1
+    runnables: [Asw_Fast]
+
+resources:
+  - name: demo               # guards the pool->mailbox handoff
+    users: [fast, med]
+    mask_tick_isr: true       # raise ceiling to ISR level (mask the tick)
+
+pool:
+  block_size: 8
+  blocks: 4

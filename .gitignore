@@ -1,6 +1,7 @@
 # avr-gcc / make build products
 *.o
 *.d
+*.a
 *.elf
 *.hex
 *.map
@@ -10,6 +11,22 @@ build_budget/
 # eros.sh -build output
 /build/
 
+# simulation test build output (tests/Makefile)
+tests/build/
+
 # PlatformIO
 .pio/
 .vscode/
+
+# Python bytecode (tools/)
+__pycache__/
+*.pyc
+
+# Simulink / Embedded Coder caches & build intermediates (regenerable).
+# Generated *code* is kept under codegen/<model>_ert_rtw/; these are not.
+cache/
+slprj/
+tmwinternal/
+*.slxc
+*.slx.autosave
+*.slx.original
