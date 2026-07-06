@@ -32,7 +32,7 @@ from .constants import MAIN_C, __version__
 from .diagnostics import Diagnostics
 from .emit import (emit_asw_skeleton, emit_config_c, emit_config_h,
                    emit_main_skeleton, emit_makefile, emit_os_gen_h,
-                   emit_rte_c, emit_rte_cfg_h, emit_rte_h)
+                   emit_rte_c, emit_rte_cfg_h, emit_rte_h, emit_rte_swc_h)
 from .emit.asw import ASW_FILES
 from .errors import ConfigError
 from .merge import has_markers
@@ -163,6 +163,10 @@ def main(argv):
                             emit_rte_cfg_h(rte_rms, src.name), True))
             outputs.append((app_dir / "Rte.c",
                             emit_rte_c(rte_rms, src.name, integrated=True), True))
+            # Per-SWC contract-phase application headers (compile a SWC alone).
+            for rm in rte_rms:
+                outputs.append((app_dir / f"Rte_{rm.name}.h",
+                                emit_rte_swc_h(rm, src.name), True))
     except ConfigError as e:
         print(e)
         return 1

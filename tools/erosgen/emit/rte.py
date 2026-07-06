@@ -244,6 +244,38 @@ def emit_rte_h(models, src_name):
     return "\n".join(L) + "\n"
 
 
+def emit_rte_swc_h(rm, src_name):
+    """Per-SWC contract-phase application header (`Rte_<SWC>.h`): the RTE run
+    entry for just this SWC plus a summary of the ports it reads/writes. Include
+    it alone to compile/test the SWC's integration before the full-system Rte.h
+    is configured (AUTOSAR contract phase). Additive - the combined Rte.h is
+    unchanged and still declares every Rte_Run_<SWC>."""
+    g = f"RTE_{rm.name.upper()}_H"
+    L = ["/**", f" * @file    Rte_{rm.name}.h",
+         f" * @brief   {GENERATED_BANNER.format(src=src_name)}", " *",
+         f" * Contract-phase application header for the '{rm.name}' SWC: its RTE",
+         " * run entry + the ports it binds. Include this alone to compile the",
+         " * SWC's integration before the full system Rte.h is configured.",
+         " */", "", f"#ifndef {g}", f"#define {g}", ""]
+    if rm.inputs:
+        L.append("/* Input ports (BSW sensor / producer SWC -> ASW): */")
+        for p in rm.inputs:
+            src = p.source if p.internal else p.driver
+            L.append(f"/*   {p.signal.name} ({p.signal.ctype}) <- {src} */")
+    if rm.outputs:
+        L.append("/* Output ports (ASW -> BSW actuator): */")
+        for p in rm.outputs:
+            tgt = "(internal signal)" if p.internal else p.driver
+            L.append(f"/*   {p.signal.name} ({p.signal.ctype}) -> {tgt} */")
+    if rm.inputs or rm.outputs:
+        L.append("")
+    L.append("/** One activation of this SWC: read inputs -> run -> write outputs. */")
+    L.append(f"void Rte_Run_{rm.name}(void);")
+    L.append("")
+    L.append(f"#endif /* {g} */")
+    return "\n".join(L) + "\n"
+
+
 def _rte_init(L, rms, multi):
     """The single Rte_Init: BSW init for every model's bound ports, then each
     model's ASW init. One model reproduces the historical body byte-for-byte."""
