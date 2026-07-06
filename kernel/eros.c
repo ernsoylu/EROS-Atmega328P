@@ -803,7 +803,10 @@ static void os_StackPaint(void)
 
     while (p < limit)
     {
-        *p = (uint8_t)OS_STACK_CANARY;
+        /* NOSONAR(c:S3519): __heap_start is the linker heap-start symbol; the
+         * RAM from it up to SP is the stack region this loop paints (avr-libc
+         * idiom, deviation D1). Sonar models the extern array as one byte. */
+        *p = (uint8_t)OS_STACK_CANARY; /* NOSONAR */
         p++;
     }
 }
@@ -815,7 +818,9 @@ static void os_StackCheck(void)
 
     for (i = 0u; i < (uint8_t)OS_STACK_GUARD_BYTES; i++)
     {
-        if (p[i] != (uint8_t)OS_STACK_CANARY)
+        /* NOSONAR(c:S3519): reads the guard bytes of the __heap_start stack
+         * region (see os_StackPaint) - the extern array is not a 1-byte object. */
+        if (p[i] != (uint8_t)OS_STACK_CANARY) /* NOSONAR */
         {
             ShutdownOS(E_OS_LIMIT); /* stack overflow - unrecoverable */
         }
