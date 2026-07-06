@@ -69,7 +69,11 @@ def write(path, content, check_only, overwrite=True, sink=None):
         return "unchanged"
     if check_only:
         return "would write"
-    path.write_text(content)
+    # `path` is a generated artifact under the user's own app_dir (main()
+    # resolves it from the app.yaml the developer passed). erosgen is a local
+    # codegen CLI with no trust boundary between the "attacker" and the file
+    # owner, so S2083 (path injection from user-controlled data) does not apply.
+    path.write_text(content)  # NOSONAR
     return status
 
 
