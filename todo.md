@@ -295,14 +295,18 @@ Regex parser is tied to the ExportToFile/Define storage-class contract.
       don't follow the contract — keeps the data model unchanged.
 - [ ] Tier B: accept a hand-authored `swc.yaml` (ports/types/runnables) as a
       first-class alternative to the Embedded Coder round-trip.
-- [ ] Tier C (aspirational): import ARXML SWC descriptions; source scaling from
-      `SwDataDefProps` (min/max/offset/slope) instead of the abandoned `.mat`.
+- [ ] Tier C — **DEFERRED (not urgent)**: import ARXML SWC descriptions; source
+      scaling from `SwDataDefProps` (min/max/offset/slope) instead of the
+      abandoned `.mat`. Parked until there is a concrete ARXML source to consume.
 
 ### Phase 12 — Toolchain/project gen + calibration (low priority)
 - [ ] `emit/` also produces `CMakeLists.txt`, VSCode `tasks.json`/
       `c_cpp_properties.json`, and `compile_commands.json` from the per-`.o` rule.
-- [ ] `emit/a2l.py` (ASAP2/A2L from the `Calibration`/`Signal` dataclasses) + a
-      minimal XCP-on-UART slave over the existing console, for on-target tuning.
+- [ ] `emit/a2l.py` (ASAP2/A2L from the `Calibration`/`Signal` dataclasses) —
+      the static calibration description. The **XCP-on-UART slave** (live on-target
+      tuning over the console) is **DEFERRED (not urgent)**: A2L alone already
+      documents the tunables; live XCP is a follow-on only if on-target tuning is
+      actually needed.
 
 ### Phase 13 — Project/workspace + variant management (low priority)
 Today one `app.yaml` = one application; there is no ECU-configuration-set or
