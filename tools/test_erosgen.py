@@ -744,6 +744,30 @@ def test_asw_task_end_to_end_generate():
         assert "/* my algorithm */" in body.read_text()
 
 
+def test_makefile_unset_drivers_dir_is_clean_error():
+    # A port bound to a driver needs system.drivers_dir; if it's unset the
+    # Makefile emitter must raise a clear ConfigError, not crash with a None in
+    # VPATH (the TypeError a fresh GUI project used to hit on Generate).
+    from erosgen.emit import emit_makefile
+    from erosgen.errors import ConfigError
+    s = _system(
+        "system: { name: p, mcu: atmega328p, kernel_dir: ../kernel }\n"
+        "tasks:\n"
+        "  - { name: init, autostart: true, wcet_ms: 1 }\n"
+        "  - name: t\n"
+        "    period_ms: 10\n"
+        "    wcet_ms: 1\n"
+        "    ports:\n"
+        "      in: [{ signal: IN_X, type: uint16_T, driver: adc, channel: 0 }]\n"
+        "resources: [{ name: r, users: [t] }]\n")
+    try:
+        emit_makefile(s, Path("."))
+    except ConfigError as e:
+        assert "drivers_dir" in str(e) and "adc.c" in str(e)
+    else:
+        raise AssertionError("expected ConfigError when drivers_dir is unset")
+
+
 def test_within_rate_order_tiebreak():
     # Same-rate tasks tie-break by explicit `order` (higher = more urgent), so a
     # hand task and a codegen task at one rate interleave freely.

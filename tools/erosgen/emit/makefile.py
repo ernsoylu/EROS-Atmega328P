@@ -41,6 +41,16 @@ def periph_defines(s):
     return defs
 
 
+def _drivers_dir_or_fail(s, ext_drv):
+    """system.drivers_dir, or a clear ConfigError if port-bound driver sources
+    are needed but it isn't set (rather than emitting a Makefile with a None in
+    VPATH - the crash a GUI project with unset drivers_dir used to hit)."""
+    if not s.drivers_dir:
+        fail("driver sources (" + ", ".join(sorted(set(ext_drv))) + ") are "
+             "needed but system.drivers_dir is not set")
+    return s.drivers_dir
+
+
 def model_driver_srcs(m, profile):
     """Source files for the drivers a model's ports bind to (adc.c, ...);
     dio binds to raw registers and needs no source."""
@@ -78,11 +88,11 @@ def emit_makefile(s, app_dir):
     if s.asw_tasks and "Rte.c" not in app_srcs:
         app_srcs.append("Rte.c")
     vpath = [s.kernel_dir]
-    if ext_drv:
-        vpath.append(s.drivers_dir)
     incs = ["-I.", f"-I{s.kernel_dir}"]
     if ext_drv:
-        incs.append(f"-I{s.drivers_dir}")
+        d = _drivers_dir_or_fail(s, ext_drv)
+        vpath.append(d)
+        incs.append(f"-I{d}")
 
     model_block = []
     if s.simulink:
@@ -126,10 +136,12 @@ def emit_makefile(s, app_dir):
             for fname in model_driver_srcs(m, s.profile):
                 if fname not in ext_drv:
                     ext_drv.append(fname)
-        if ext_drv and s.drivers_dir not in vpath:
-            vpath.append(s.drivers_dir)
-        if ext_drv and f"-I{s.drivers_dir}" not in incs:
-            incs.append(f"-I{s.drivers_dir}")
+        if ext_drv:
+            d = _drivers_dir_or_fail(s, ext_drv)
+            if d not in vpath:
+                vpath.append(d)
+            if f"-I{d}" not in incs:
+                incs.append(f"-I{d}")
 
     defs = periph_defines(s)
 

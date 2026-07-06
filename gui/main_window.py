@@ -298,6 +298,12 @@ class MainWindow(QMainWindow):
             self.board_combo.setCurrentIndex(k)
         self.board_combo.currentIndexChanged.connect(self._on_board_changed)
         form.addRow("Board", self.board_combo)
+
+        # Build paths Generate needs: where the EROS kernel + peripheral driver
+        # sources live (relative to the saved app.yaml, or absolute). Without
+        # drivers_dir a project that binds a driver can't generate a Makefile.
+        form.addRow("kernel dir", self._dir_field("kernel_dir", "…/kernel"))
+        form.addRow("drivers dir", self._dir_field("drivers_dir", "…/drivers"))
         lay.addWidget(cfg)
 
         facts = p.system_facts()
@@ -613,6 +619,30 @@ class MainWindow(QMainWindow):
         self.project.set_hook(name, on)
         self._defer_refresh()
 
+    def _dir_field(self, key, hint):
+        """An editable path field + Browse for kernel_dir / drivers_dir. Edits
+        don't refresh (paths don't affect live diagnostics), so typing a path is
+        never interrupted."""
+        edit = QLineEdit(getattr(self.project, key))
+        edit.setPlaceholderText(hint)
+        edit.editingFinished.connect(
+            lambda: self.project.set_dir(key, edit.text().strip()))
+        browse = QPushButton("Browse…")
+
+        def pick():
+            d = QFileDialog.getExistingDirectory(self, f"Select {key}")
+            if d:
+                edit.setText(d)
+                self.project.set_dir(key, d)
+        browse.clicked.connect(pick)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(edit, 1)
+        row.addWidget(browse)
+        holder = QWidget()
+        holder.setLayout(row)
+        return holder
+
     def _on_mcu_changed(self, chip):
         # Picking a chip selects that chip's default board (its bare-chip profile,
         # or first board). Do NOT gate on self.project.doc: on a fresh launch the
@@ -630,7 +660,12 @@ class MainWindow(QMainWindow):
             self.project.set_mcu(board)
             self._defer_refresh()
 
-    def _apply_task(self):
+    def _commit_task(self):
+        """Write the task page's current widgets (timing + every interface and
+        calibration row) into the document, without refreshing. Called by Apply
+        and, crucially, before Add/Remove Port/Calibration so a structural edit
+        never discards the in-progress table values (which live only in the
+        widgets until they're written back here)."""
         page = getattr(self, "_task_page", None)
         if not page:
             return
@@ -654,7 +689,13 @@ class MainWindow(QMainWindow):
                 name, st["name"], ctype=st["type"].currentText(),
                 value=int(val) if val.lstrip("-").isdigit() else val,
                 description=st["desc"].text())
-        self._log(f"applied {name}")
+
+    def _apply_task(self):
+        page = getattr(self, "_task_page", None)
+        if not page:
+            return
+        self._commit_task()
+        self._log(f"applied {page['name']}")
         self._defer_refresh()
 
     def _priority_combo(self, name):
@@ -690,10 +731,12 @@ class MainWindow(QMainWindow):
         sig, ok = QInputDialog.getText(self, f"Add {direction} port",
                                        "Signal name:", text=pfx)
         if ok and sig.strip():
+            self._commit_task()            # keep the other rows' in-progress edits
             self.project.add_port(name, direction, sig.strip())
             self._defer_refresh()
 
     def _remove_port(self, name, signal):
+        self._commit_task()
         self.project.remove_port(name, signal)
         self._defer_refresh()
 
@@ -701,10 +744,12 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QInputDialog
         cal, ok = QInputDialog.getText(self, "Add calibration", "Name:")
         if ok and cal.strip():
+            self._commit_task()
             self.project.add_calibration(name, cal.strip())
             self._defer_refresh()
 
     def _remove_calibration(self, name, cal):
+        self._commit_task()
         self.project.remove_calibration(name, cal)
         self._defer_refresh()
 
