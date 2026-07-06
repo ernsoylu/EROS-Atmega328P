@@ -10,8 +10,8 @@ console. No domain logic - every fact comes from the ProjectModel / the engine.
 from PySide6.QtCore import QProcess, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
-                               QFileDialog, QFormLayout, QGroupBox, QLabel,
-                               QLineEdit, QMainWindow, QMessageBox,
+                               QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+                               QLabel, QLineEdit, QMainWindow, QMessageBox,
                                QPlainTextEdit, QPushButton, QScrollArea,
                                QSpinBox, QSplitter, QTabWidget, QTableWidget,
                                QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
@@ -23,37 +23,8 @@ _SEV_COLOR = {"error": "#d64545", "warning": "#c98a1b", "info": "#3b73c4"}
 _HOOKS = ("startup", "error", "shutdown")
 
 
-# ---- small view helpers (module-level, no state) ------------------------
 def _ro(text):
     return QTableWidgetItem(str(text))
-
-
-def _params_to_text(params):
-    return ", ".join(f"{k}={v}" for k, v in params.items())
-
-
-def _parse_params(text):
-    """'channel=0' / 'port=B, bit=5' -> {'channel': 0} / {'port': 'B', ...}.
-    Ints stay ints; everything else is a string. Blank -> {} (e.g. pwm)."""
-    kw = {}
-    for kv in text.split(","):
-        if "=" in kv:
-            k, v = (x.strip() for x in kv.split("=", 1))
-            if k:
-                kw[k] = int(v) if v.lstrip("-").isdigit() else v
-    return kw
-
-
-def _params_hint(direction, drivers):
-    """Placeholder text listing what each valid driver for this direction wants,
-    e.g. 'adc: channel=…  |  dio: port=…, bit=…'."""
-    parts = []
-    for d in sorted(drivers):
-        if direction in drivers[d]["directions"]:
-            req = drivers[d]["required"]
-            parts.append(f"{d}: " + (", ".join(f"{k}=…" for k in req)
-                                     if req else "no params"))
-    return "  |  ".join(parts)
 
 
 class MainWindow(QMainWindow):
@@ -256,13 +227,27 @@ class MainWindow(QMainWindow):
         name = QLineEdit(p.name)
         name.editingFinished.connect(lambda: self._set_name(name.text()))
         form.addRow("Project name", name)
+
+        # MCU (chip) then Board: one chip can carry several board configs (an
+        # atmega328p runs as a bare chip, an arduino_uno, ...). The board profile
+        # is what the engine actually targets (system.mcu).
+        targets = p.available_targets()
+        chip = p.current_chip()
         self.mcu_combo = QComboBox()
-        self.mcu_combo.addItems(p.available_mcus())
-        i = self.mcu_combo.findText(p.mcu)
-        if i >= 0:
-            self.mcu_combo.setCurrentIndex(i)
+        self.mcu_combo.addItems(list(targets))
+        j = self.mcu_combo.findText(chip)
+        if j >= 0:
+            self.mcu_combo.setCurrentIndex(j)
         self.mcu_combo.currentTextChanged.connect(self._on_mcu_changed)
         form.addRow("MCU", self.mcu_combo)
+
+        self.board_combo = QComboBox()
+        self.board_combo.addItems(targets.get(chip, [p.mcu]))
+        k = self.board_combo.findText(p.mcu)
+        if k >= 0:
+            self.board_combo.setCurrentIndex(k)
+        self.board_combo.currentTextChanged.connect(self._on_board_changed)
+        form.addRow("Board", self.board_combo)
         lay.addWidget(cfg)
 
         facts = p.system_facts()
@@ -377,7 +362,7 @@ class MainWindow(QMainWindow):
             ["Signal", "Dir", "Type", "Driver", "Params"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
-        editors = []
+        states = []
         for i, r in enumerate(rows):
             table.setItem(i, 0, _ro(r["signal"]))
             table.setItem(i, 1, _ro(r["direction"]))
@@ -391,19 +376,59 @@ class MainWindow(QMainWindow):
                 if j >= 0:
                     combo.setCurrentIndex(j)
             table.setCellWidget(i, 3, combo)
-            pedit = QLineEdit(_params_to_text(r["params"]))
-            pedit.setPlaceholderText(_params_hint(r["direction"], drivers))
-            table.setCellWidget(i, 4, pedit)
-            editors.append((r["signal"], combo, pedit))
+            # Params are picked from MCU-limited dropdowns (channel / pin), never
+            # typed - so a binding is always well-formed (no parse errors, no
+            # invalid channel/pin). The cell rebuilds when the driver changes.
+            state = {"signal": r["signal"], "combo": combo, "get": (lambda: {})}
+            self._fill_params_cell(table, i, r["driver"], r["params"], state)
+            combo.currentTextChanged.connect(
+                lambda drv, row=i, st=state:
+                    self._fill_params_cell(table, row, drv, {}, st))
+            states.append(state)
         table.resizeColumnsToContents()
         table.horizontalHeader().setStretchLastSection(True)
         lay.addWidget(table, 1)
 
+        self._model_page = {"name": mname, "rate": rate, "states": states}
         apply = QPushButton("Apply bindings")
-        apply.clicked.connect(
-            lambda: self._apply_model(mname, rate.value(), editors))
+        apply.clicked.connect(lambda: self._apply_model())
         lay.addWidget(apply)
         return w
+
+    def _fill_params_cell(self, table, row, driver, params, state):
+        """Put the right param picker in the Params cell for `driver`: adc -> a
+        channel dropdown, dio -> a pin dropdown, pwm/unbound -> nothing. Sets
+        state['get'] to a callable returning the chosen params dict."""
+        cell = QWidget()
+        h = QHBoxLayout(cell)
+        h.setContentsMargins(4, 0, 4, 0)
+        if driver == "adc":
+            box = QComboBox()
+            for ch in self.project.adc_channels():
+                box.addItem(f"channel {ch}", ch)
+            idx = box.findData(params.get("channel"))
+            box.setCurrentIndex(idx if idx >= 0 else 0)
+            h.addWidget(box)
+            state["get"] = lambda: {"channel": box.currentData()}
+        elif driver == "dio":
+            box = QComboBox()
+            for pin in self.project.dio_pins():
+                box.addItem(pin["label"], pin["pin"])     # userData = "PB5"
+            port, bit = params.get("port"), params.get("bit")
+            want = f"P{port}{bit}" if port and bit is not None else None
+            idx = box.findData(want) if want else -1
+            box.setCurrentIndex(idx if idx >= 0 else 0)
+            h.addWidget(box)
+
+            def get_dio():
+                pin = box.currentData()                    # "PB5" -> port B, bit 5
+                return ({"port": pin[1], "bit": int(pin[2:])}
+                        if pin and len(pin) >= 3 else {})
+            state["get"] = get_dio
+        else:                                   # pwm / (unbound): no params
+            h.addWidget(QLabel("—"))
+            state["get"] = lambda: {}
+        table.setCellWidget(row, 4, cell)
 
     # ---- inspector edit handlers ----------------------------------------
     def _set_name(self, text):
@@ -416,26 +441,38 @@ class MainWindow(QMainWindow):
         self.project.set_hook(name, on)
         self._defer_refresh()
 
-    def _on_mcu_changed(self, name):
-        # Gate on the doc, not the saved path, so it also works on a new,
-        # not-yet-saved project (matching the live diagnostics behaviour).
-        if self.project.doc and name and name != self.project.mcu:
-            self.project.set_mcu(name)
+    def _on_mcu_changed(self, chip):
+        # Picking a chip selects that chip's default board (its bare-chip profile,
+        # or first board). Do NOT gate on self.project.doc: on a fresh launch the
+        # doc is empty ({}), and gating there is exactly what made the MCU combo
+        # look dead - set_mcu on an empty doc just creates system.mcu.
+        if not chip or chip == self.project.current_chip():
+            return
+        board = self.project.available_targets().get(chip, [chip])[0]
+        self.project.set_mcu(board)
+        self._defer_refresh()
+
+    def _on_board_changed(self, board):
+        if board and board != self.project.mcu:
+            self.project.set_mcu(board)
             self._defer_refresh()
 
     def _apply_task(self, name, period_ms, wcet_ms, autostart):
         self.project.update_task(name, period_ms, wcet_ms, autostart)
         self._defer_refresh()
 
-    def _apply_model(self, mname, rate_ms, editors):
-        self.project.set_model_rate(mname, rate_ms)
-        for signal, combo, pedit in editors:
-            drv = combo.currentText()
+    def _apply_model(self):
+        page = getattr(self, "_model_page", None)
+        if not page:
+            return
+        mname = page["name"]
+        self.project.set_model_rate(mname, page["rate"].value())
+        for st in page["states"]:
+            drv = st["combo"].currentText()
             if drv == "(unbound)":
-                self.project.unbind_port(mname, signal)
+                self.project.unbind_port(mname, st["signal"])
             else:
-                self.project.bind_port(mname, signal, drv,
-                                       **_parse_params(pedit.text()))
+                self.project.bind_port(mname, st["signal"], drv, **st["get"]())
         self._log(f"applied bindings for {mname}")
         self._defer_refresh()
 

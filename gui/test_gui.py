@@ -181,38 +181,38 @@ def test_mainwindow_shows_model_ports():
 
 
 def test_mainwindow_model_page_binds_inline():
-    # Selecting a model builds the interface table; Apply commits the bindings
-    # straight from the row editors - no modal.
+    # Selecting a model builds the interface table; params are MCU-limited
+    # dropdowns (channel / pin), so Apply commits a well-formed binding with no
+    # parsing and no missing-key errors.
     from gui.main_window import MainWindow
     from PySide6.QtWidgets import QComboBox, QTableWidget
     _app()
     p = ProjectModel()
-    p.new("swc_demo", "atmega328p")
+    p.new("swc_demo", "arduino_uno")
     cg = str(REPO / "codegen" / "appKnbSwt_ert_rtw")
     name, _sigs, runnable = p.model_signals(cg)
     p.add_model(name, cg, runnable, rate_ms=10)
     w = MainWindow(p)
     w._sel = ("model", name)
     w._show_inspector()                            # build the model page
-    page = w.inspector.widget()
-    table = page.findChild(QTableWidget)
+    table = w.inspector.widget().findChild(QTableWidget)
     assert table.rowCount() == 2
-    # drive the IN_ row: pick adc, params channel=0
     for r in range(table.rowCount()):
+        driver = table.cellWidget(r, 3)
         if table.item(r, 0).text() == "IN_KnbVal_Z":
-            combo = table.cellWidget(r, 3)
-            assert isinstance(combo, QComboBox)
-            assert {combo.itemText(i) for i in range(combo.count())} == {
-                "(unbound)", "adc", "dio"}   # only in-capable drivers offered
-            combo.setCurrentText("adc")
-            table.cellWidget(r, 4).setText("channel=0")
+            assert {driver.itemText(i) for i in range(driver.count())} == {
+                "(unbound)", "adc", "dio"}         # only in-capable drivers
+            driver.setCurrentText("adc")           # rebuilds the params cell
+            chan = table.cellWidget(r, 4).findChild(QComboBox)
+            assert chan.count() == 6               # arduino_uno: A0..A5
+            chan.setCurrentText("channel 0")
         if table.item(r, 0).text() == "OUT_Led1_B":
-            table.cellWidget(r, 3).setCurrentText("dio")
-            table.cellWidget(r, 4).setText("port=B, bit=5")
-    editors = [(table.item(r, 0).text(), table.cellWidget(r, 3),
-                table.cellWidget(r, 4)) for r in range(table.rowCount())]
-    w._apply_model(name, 10, editors)
+            driver.setCurrentText("dio")
+            pin = table.cellWidget(r, 4).findChild(QComboBox)
+            pin.setCurrentIndex(pin.findData("PB5"))       # PB5 (D13)
+    w._apply_model()
     assert p.port_binding(name, "IN_KnbVal_Z") == "adc channel=0"
+    assert p.port_binding(name, "OUT_Led1_B") == "dio port=B bit=5"
     assert [d for d in p.diagnostics() if d.severity == "error"] == []
     w.close()
 
@@ -233,12 +233,41 @@ def test_mainwindow_system_page_mcu_change_rerenders():
     w.close()
 
 
+def test_mainwindow_mcu_change_on_empty_launch():
+    # Regression: on a fresh launch the doc is {} (title "(no project)"). The old
+    # `if self.project.doc` guard made the MCU combo a no-op there.
+    from gui.main_window import MainWindow
+    _app()
+    w = MainWindow(ProjectModel())         # empty doc, no project
+    assert not w.project.doc
+    w._on_mcu_changed("atmega2560")        # used to do nothing
+    assert w.project.mcu == "atmega2560"   # now creates system.mcu
+    w.close()
+
+
+def test_mainwindow_board_selector():
+    # MCU picks the chip; Board picks a concrete profile on it. arduino_uno and
+    # the bare atmega328p share one chip but target different board profiles.
+    from gui.main_window import MainWindow
+    _app()
+    p = ProjectModel()
+    p.new("t", "arduino_uno")
+    w = MainWindow(p)                       # System page built the two combos
+    assert w.mcu_combo.currentText() == "atmega328p"        # chip
+    assert w.board_combo.currentText() == "arduino_uno"     # board
+    boards = {w.board_combo.itemText(i) for i in range(w.board_combo.count())}
+    assert boards == {"atmega328p", "arduino_uno"}
+    w._on_board_changed("atmega328p")      # switch board within the same chip
+    assert p.mcu == "atmega328p"
+    w.close()
+
+
 def test_mainwindow_mcu_combo_live():
     from gui.main_window import MainWindow
     _app()
     p = ProjectModel(REF)
     w = MainWindow(p)
-    assert w.mcu_combo.count() >= 2  # atmega328p, atmega2560
+    assert w.mcu_combo.count() >= 2  # atmega328p, atmega2560 (chips)
     w._on_mcu_changed("atmega2560")
     assert p.mcu == "atmega2560"
     w.close()

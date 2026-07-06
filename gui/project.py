@@ -428,3 +428,85 @@ class ProjectModel:
                 pd.pop(k, None)
             return True
         return False
+
+    # ---- target: chip (MCU) + board -------------------------------------
+    def available_targets(self):
+        """Every MCU profile grouped by chip: {chip: [profile, ...]}. A profile
+        with no `extends` is a bare chip; profiles that `extends` it are boards on
+        that chip (arduino_uno -> atmega328p). So one chip can carry several board
+        configs. The chip's own name sorts first in its list, boards after."""
+        import yaml
+        mcu_dir = Path(erosgen.__file__).resolve().parent / "mcu"
+        parent = {}
+        for f in mcu_dir.glob("*.yaml"):
+            try:
+                parent[f.stem] = (yaml.safe_load(f.read_text()) or {}).get("extends")
+            except Exception:
+                parent[f.stem] = None
+
+        def root(n, seen=()):
+            p = parent.get(n)
+            if not p or p == n or p in seen or p not in parent:
+                return n
+            return root(p, seen + (n,))
+
+        groups = {}
+        for name in parent:
+            groups.setdefault(root(name), []).append(name)
+        return {chip: sorted(v, key=lambda x: (x != chip, x))
+                for chip, v in sorted(groups.items())}
+
+    def current_chip(self):
+        """The chip family of the selected profile (its `extends` root)."""
+        for chip, names in self.available_targets().items():
+            if self.mcu in names:
+                return chip
+        return self.mcu
+
+    # ---- driver param value sets (MCU-limited, for dropdowns) -----------
+    def adc_channels(self):
+        """Valid ADC channel numbers for the current MCU/board. Derived from the
+        board's A-pin aliases (A0..A5 -> 0..5) so it's board-specific; falls back
+        to 0..7 for a profile that declares no analog aliases."""
+        try:
+            from erosgen.mcu.profile import load_profile
+            pr = load_profile(self.mcu)
+        except Exception:
+            return list(range(8))
+        chans = sorted({int(k[1:]) for k in pr.aliases
+                        if re.fullmatch(r"A\d+", k)})
+        return chans or list(range(8))
+
+    def dio_pins(self):
+        """Usable GPIO pins for the current MCU/board as
+        [{pin, port, bit, label}]. The board's pin aliases are the real broken-out
+        pins (PB5 = D13), so they're the authoritative dio choices; a bare chip
+        with no aliases falls back to every valid port x bit 0..7."""
+        try:
+            from erosgen.mcu.profile import load_profile
+            pr = load_profile(self.mcu)
+        except Exception:
+            return []
+        silks = {}
+        for silk, pin in pr.aliases.items():
+            silks.setdefault(pin, []).append(silk)
+        pins, seen = [], set()
+
+        def add(pin):
+            m = re.fullmatch(r"P([A-L])(\d)", pin)
+            if not m or pin in seen:
+                return
+            seen.add(pin)
+            names = silks.get(pin)
+            label = pin + (f" ({', '.join(sorted(names))})" if names else "")
+            pins.append({"pin": pin, "port": m.group(1),
+                         "bit": int(m.group(2)), "label": label})
+
+        for pin in silks:                       # board-exposed pins
+            add(pin)
+        if not pins:                            # bare chip: all port x bit
+            for p in pr.ports:
+                for b in range(8):
+                    add(f"P{p}{b}")
+        pins.sort(key=lambda d: (d["port"], d["bit"]))
+        return pins
