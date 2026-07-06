@@ -440,6 +440,27 @@ def test_pwm_rte_adapter():
     assert "RTE_CFG_DUTY_PM_SIGNAL" in emit_rte_cfg_h(rm, "app.yaml")
 
 
+def test_rte_timer0_pwm_output_binding():
+    """An output port can bind to Timer0 PWM (a second 8-bit PWM family): the
+    RTE emits T0Pwm_SetDuty(channel, duty) + T0Pwm_Init, no #error."""
+    from erosgen.bind import DRIVERS
+    from erosgen.emit import emit_rte_c, emit_rte_cfg_h
+    from erosgen.models import BoundPort, ResolvedModel
+    from erosgen.parse import Signal
+    assert DRIVERS["timer0_pwm"].vmax == 255           # 8-bit duty
+    assert DRIVERS["timer0_pwm"].required == ("channel",)
+    port = BoundPort(Signal("OUT_Led_Duty", "uint8_T", "out"),
+                     "out", "timer0_pwm", {"channel": 1}, "Led_Duty")
+    rm = ResolvedModel("panel", "panel_initialize", "panel_Runnable", 20,
+                       [], [port], None)
+    c = emit_rte_c(rm, "app.yaml", integrated=True)
+    assert "#error" not in c
+    assert "T0Pwm_SetDuty(RTE_CFG_LED_DUTY_T0PWM_CH, duty)" in c
+    assert '#include "timer0_pwm.h"' in c and "T0Pwm_Init();" in c
+    cfg = emit_rte_cfg_h(rm, "app.yaml")
+    assert "RTE_CFG_LED_DUTY_T0PWM_CH" in cfg and cfg.rstrip().endswith("*/")
+
+
 def _scaled_adc_model(slope, offset):
     from erosgen.models import BoundPort, ResolvedModel
     from erosgen.parse import Signal

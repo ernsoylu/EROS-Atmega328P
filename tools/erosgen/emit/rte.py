@@ -2,15 +2,17 @@
 
 Generated from a ResolvedModel (models.py). Mirrors the hand-written rte/
 template (see rte/README.md) so the output compiles against the same drivers:
-Adc_ReadChannel/Adc_Init for adc ports, DDRx/PORTx/PINx for dio ports. Ports with a
-driver this emitter doesn't handle yet produce a visible #error.
+Adc_ReadChannel/Adc_Init for adc ports, DDRx/PORTx/PINx for dio ports, Pwm_/
+T0Pwm_ for the pwm/timer0_pwm outputs. Ports with a driver this emitter doesn't
+handle yet produce a visible #error.
 """
 
 from ..backends import bit_clear, bit_read, bit_set, dio_direction_init
 from ..constants import GENERATED_BANNER
 from ..parse.ert import RTW_TYPES
 
-_DRIVER_HEADER = {"adc": "adc.h", "pwm": "pwm.h"}  # dio uses raw avr/io.h
+_DRIVER_HEADER = {"adc": "adc.h", "pwm": "pwm.h",
+                  "timer0_pwm": "timer0_pwm.h"}  # dio uses raw avr/io.h
 
 _DEF_PAD = 26  # macro-name column so every #define value aligns
 
@@ -74,6 +76,8 @@ def _cfg_defines(port):
         else:
             L.append(_def(f"RTE_CFG_{tag}_PIN", f"PIN{prt}"))
         L.append(_def(f"RTE_CFG_{tag}_BIT", f"{bit}u"))
+    elif port.driver == "timer0_pwm":
+        L.append(_def(f"RTE_CFG_{tag}_T0PWM_CH", f"{int(p['channel'])}u"))
     if port.scaled:
         L.append(_def(f"RTE_CFG_{tag}_SLOPE", _c_num(port.slope)))
         L.append(_def(f"RTE_CFG_{tag}_OFFSET", _c_num(port.offset)))
@@ -190,6 +194,22 @@ def _adapter(port):
                 "{",
                 "    Pwm_SetDutyCycle(permille);",
                 "}"]
+    if port.driver == "timer0_pwm" and port.direction == "out":
+        if port.scaled:
+            # opt-in calibration: duty = port*slope + offset (engineering units
+            # -> the driver's 0..255 8-bit duty).
+            ptype = _signal_ctype(port.signal, "uint8_t")
+            wide = _wide(port)
+            return [f"static void Rte_Write_{stem}({ptype} value)",
+                    "{",
+                    f"    uint8_t duty = (uint8_t)(({wide})value"
+                    f" * RTE_CFG_{tag}_SLOPE + RTE_CFG_{tag}_OFFSET);",
+                    f"    T0Pwm_SetDuty(RTE_CFG_{tag}_T0PWM_CH, duty);",
+                    "}"]
+        return [f"static void Rte_Write_{stem}(uint8_t duty)",
+                "{",
+                f"    T0Pwm_SetDuty(RTE_CFG_{tag}_T0PWM_CH, duty);",
+                "}"]
     return [f'#error "RTE emit: driver \'{port.driver}\' '
             f'({port.direction}) not supported yet"']
 
@@ -240,6 +260,8 @@ def _rte_init(L, rms, multi):
                 L.append("    Adc_Init();")
             elif port.driver == "pwm":
                 L.append("    Pwm_Init();")
+            elif port.driver == "timer0_pwm":
+                L.append("    T0Pwm_Init();")
             elif port.driver == "dio":
                 for line in dio_direction_init(port.tag, port.direction == "out"):
                     L.append(f"    {line}")

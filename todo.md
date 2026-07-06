@@ -241,8 +241,13 @@ with it and are migrated separately, not by a blind repo-wide rename).
       `TASK_STATUS`/`TASK_REPORT` pattern.
 - [ ] Explicit runnable-to-task mapping so one SWC's multiple runnables can map
       to different rates (today one task = one rate).
-- [ ] `emit/rte.py` currently `#error`s any driver beyond adc/dio/pwm — extend
-      coverage as new bindings land.
+- [x] **RTE driver coverage — timer0_pwm** (increment 1): output ports can now
+      bind to Timer0 8-bit PWM (`driver: timer0_pwm, channel: 0|1`, duty 0..255,
+      opt-in scaling) — `bind.py` DriverSpec + `emit/rte.py` adapter
+      (`T0Pwm_SetDuty(ch, duty)`)/init/header + a GUI channel picker. Verified:
+      66 tests, and a generated app compiles/links against `drivers/mcal/
+      timer0_pwm.c`. `emit/rte.py` still `#error`s unbound drivers; `acomp` (in,
+      needs init args) and `icp` (multi-value) are follow-ups.
 
 ### Phase 9 — Graphical pinout view (residual GUI gap)
 Conflict-aware pin/channel **dropdowns** exist; the CubeMX-style visual **pin-map

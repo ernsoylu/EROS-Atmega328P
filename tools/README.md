@@ -166,7 +166,7 @@ models:                       # optional: GENERATE the RTE for a Simulink SWC.
     runnable: appKnbSwt_Runnable                # emits Rte.h/Rte_Cfg.h/Rte.c,
     rate_ms: 10               #   and wires it as TASK_/ALARM_APPKNBSWT.
     wcet_ms: 2                # optional (default 1)
-    ports:                    # each IN_/OUT_ signal -> a driver (adc/dio/pwm)
+    ports:                    # each IN_/OUT_ signal -> a driver (adc/dio/pwm/timer0_pwm)
       in:  [{ signal: IN_KnbVal_Z, driver: adc, channel: 0 }]
       out: [{ signal: OUT_Led1_B, driver: dio, port: B, bit: 5 }]
 ```

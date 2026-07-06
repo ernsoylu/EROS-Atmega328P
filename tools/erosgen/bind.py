@@ -35,6 +35,11 @@ DRIVERS = {
     # Pwm_SetDutyCycle(uint16_t).
     "pwm": DriverSpec("pwm", ("out",), "uint16_t", 1000, "pwm.h",
                       (), "Pwm_Init();"),
+    # Timer0 8-bit PWM: two channels (0 = OC0B/PD5, 1 = OC0A/PD6), duty 0..255.
+    # Matches timer0_pwm.h's T0Pwm_SetDuty(channel, duty); the port picks a
+    # `channel` - a second PWM family alongside the Timer1 pwm above.
+    "timer0_pwm": DriverSpec("timer0_pwm", ("out",), "uint8_t", 255,
+                             "timer0_pwm.h", ("channel",), "T0Pwm_Init();"),
 }
 
 

@@ -829,6 +829,14 @@ class MainWindow(QMainWindow):
                 return ({"port": pin[1], "bit": int(pin[2:])}
                         if pin and len(pin) >= 3 else {})
             state["get"] = get_dio
+        elif driver == "timer0_pwm":            # Timer0 8-bit PWM: 2 channels
+            box = QComboBox()
+            for ch, pin in ((0, "PD5/OC0B"), (1, "PD6/OC0A")):
+                box.addItem(f"channel {ch} ({pin})", ch)
+            idx = box.findData(params.get("channel"))
+            box.setCurrentIndex(idx if idx >= 0 else 0)
+            h.addWidget(box)
+            state["get"] = lambda: {"channel": box.currentData()}
         else:                                   # pwm / (unbound): no params
             h.addWidget(QLabel("—"))
             state["get"] = lambda: {}
