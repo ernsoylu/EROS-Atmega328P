@@ -43,4 +43,12 @@ uint16_t Adc_ReadVccMillivolts(void);
  *  per board and store the offset in EEPROM. ~350 us. */
 uint16_t Adc_ReadTempRaw(void);
 
+/** Cyclic non-blocking channel-0 sampler (AUTOSAR-style MainFunction): latches
+ *  the previous conversion and kicks the next. Call periodically (wire via
+ *  `peripherals.adc.main_function_ms`); read the latest with the getter. */
+void Adc_MainFunction(void);
+
+/** The most recent sample latched by Adc_MainFunction() (0 until the first). */
+uint16_t Adc_GetLastSample(void);
+
 #endif /* ADC_H */

@@ -77,3 +77,25 @@ uint16_t Adc_ReadTempRaw(void)
 {
     return Adc_ReadChannelInternal((uint8_t)(ADC_REF_1V1 | ADC_MUX_TEMP));
 }
+
+/* --- Cyclic sampling: AUTOSAR-style MainFunction -------------------------- */
+/* Non-blocking channel-0 sampler for periodic scheduling: latch the previous
+ * conversion, then kick the next. Wire it with `peripherals.adc.main_function_ms`
+ * in app.yaml (erosgen calls it from the matching-rate ASW task); poll the
+ * freshest value with Adc_GetLastSample(). */
+static volatile uint16_t adc_last_sample;
+
+uint16_t Adc_GetLastSample(void)
+{
+    return adc_last_sample;
+}
+
+void Adc_MainFunction(void)
+{
+    if ((ADCSRA & (uint8_t)(1u << ADSC)) == 0u) /* previous conversion done */
+    {
+        adc_last_sample = ADC;                  /* latch (non-blocking) */
+        ADMUX = ADC_REF;                        /* channel 0 */
+        ADCSRA |= (uint8_t)(1u << ADSC);        /* kick the next */
+    }
+}

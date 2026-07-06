@@ -361,6 +361,32 @@ class System:
                              "(Timer0 is 8-bit: TOP fixed at 255)",
                              "peripherals.timer0_pwm")
 
+        # ---- cyclic driver MainFunctions (AUTOSAR) ----------------------
+        # peripherals.<p>.main_function_ms wires <Mod>_MainFunction to be called
+        # every N ms from the matching-rate ASW task's (regenerated) scaffold.
+        mf = self.profile.main_functions or {}
+        rates = {t.period_ms for t in self.periodic}
+        self.main_functions = []          # [(peripheral, symbol, rate_ms)]
+        for p in sorted(self.peripherals):
+            cfg = self.peripherals.get(p) or {}
+            rate = cfg.get("main_function_ms") if isinstance(cfg, dict) else None
+            if rate is None:
+                continue
+            rate = int(rate)
+            if p not in mf:
+                sink.error("MAIN_FUNCTION_UNSUPPORTED",
+                           f"peripheral '{p}' has no cyclic MainFunction "
+                           f"(supported: {', '.join(sorted(mf)) or 'none'})",
+                           f"peripherals.{p}")
+            elif rate not in rates:
+                sink.error("MAIN_FUNCTION_NO_TASK",
+                           f"peripherals.{p}.main_function_ms {rate} needs a "
+                           f"periodic task at that rate (have: "
+                           f"{sorted(r for r in rates if r)})",
+                           f"peripherals.{p}")
+            else:
+                self.main_functions.append((p, mf[p], rate))
+
         # ---- gpio + pin ownership matrix --------------------------------
         self.gpio = self._parse_gpio(doc.get("gpio", []) or [], sink)
         self._check_pins(sink)

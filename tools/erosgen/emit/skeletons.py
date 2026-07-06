@@ -17,6 +17,11 @@ def emit_asw_skeleton(s, task):
             if str(tname).upper() == task.name:
                 step_call = f"{s.simulink['model']}_{step}();"
     tid = f"TASK_{task.name}"
+    # MCAL drivers wired to this rate via peripherals.<p>.main_function_ms: their
+    # <Mod>_MainFunction runs (as regenerated scaffold) before the user body.
+    mains = [(sym, s.profile.driver_header[p])
+             for (p, sym, rate) in getattr(s, "main_functions", [])
+             if rate == task.period_ms]
     L = []
     L.append("/**")
     L.append(f" * @file    asw_{task.period_ms}ms.c")
@@ -32,6 +37,8 @@ def emit_asw_skeleton(s, task):
     L.append(INCLUDE_EROS_H)
     if s.simulink:
         L.append(f'#include "{s.simulink["model"]}.h"')
+    for header in dict.fromkeys(h for _s, h in mains):   # unique, order-stable
+        L.append(f'#include "{header}"')
     L.append(begin("INCLUDES"))
     L.append(end("INCLUDES"))
     L.append("")
@@ -49,6 +56,10 @@ def emit_asw_skeleton(s, task):
              f"{task.wcet_ticks} tick(s). */")
     L.append(f"void {task.entry}(void)")
     L.append("{")
+    if mains:
+        L.append("    /* MCAL MainFunctions at this rate (generated - do not edit) */")
+        for sym, _h in mains:
+            L.append(f"    {sym}();")
     L.append(f"    {begin(f'{tid}_BODY')}")
     if step_call:
         L.append("    /* sample: hardware -> model inports here */")
