@@ -288,6 +288,23 @@ SystemDesk-class gap worth recording.
 - **Risk:** medium; only worth doing once BSW layering (Phase 7) gives shared
       config something to share.
 
+### Phase 14 — ATmega32U4 boards (Leonardo / Micro) (last)
+The 32U4 is AVR (avr-gcc, same C), so it fits the MCU-profile mechanism — but
+unlike the ATmega2560 (same peripheral family, worked with just a profile) it
+needs a small **kernel retarget**, so it is its own phase, not a profile drop-in.
+- [ ] `mcu/atmega32u4.yaml` profile: ports B/C/D/E/F, its pin aliases (Leonardo
+      vs Micro silk differ), timers (Timer0/1/3/4 — **no Timer2**), peripheral
+      pins, avrdude part/programmer (Caterina bootloader, 57600).
+- [ ] **Kernel tick retarget** — the 1 kHz tick is hardware-fixed on **Timer2
+      CTC** (`tick_hz` invariant), which the 32U4 lacks. Move the tick to an
+      available timer (Timer0 or Timer3) behind a profile-selected macro; keep the
+      328P path byte-identical. This is the real cost of the port.
+- [ ] **Console decision** — the 32U4's USB is native (CDC), not a USART bridge;
+      `Uart_*` on USART1 works with an external USB-serial adapter, or add a USB
+      CDC ComplexDeviceDriver (out of scope unless needed). Document the choice.
+- **Risk:** medium — the tick retarget touches the kernel; gate it behind the
+      profile so 328P/2560 stay byte-identical.
+
 ---
 
 ## Reference: durable design constraints (keep — not tasks)
