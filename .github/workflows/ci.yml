@@ -64,7 +64,7 @@ jobs:
           avr-gcc -Wall -Wextra -Werror -std=c99 -Os -flto \
             -ffunction-sections -fdata-sections -fno-common \
             -mmcu=atmega328p -DF_CPU=16000000UL \
-            -Idrivers -Irte -Icodegen/appKnbSwt_ert_rtw \
+            -Idrivers/mcal -Irte -Icodegen/appKnbSwt_ert_rtw \
             -c rte/Rte.c \
                codegen/appKnbSwt_ert_rtw/appKnbSwt.c \
                codegen/appKnbSwt_ert_rtw/appKnbSwt_Intfc.c \
