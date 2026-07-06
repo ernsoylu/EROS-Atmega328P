@@ -66,7 +66,7 @@ void StartupHook(void)
                        (1u << PD5) | (1u << PD6));
     DDRD  &= (uint8_t)~(1u << PD2);                /* button input...     */
     PORTD |= (uint8_t)(1u << PD2);                 /* ...internal pull-up */
-    UART_Init();
+    Uart_Init();
     PWM_Init();
 }
 
@@ -97,14 +97,14 @@ void ShutdownHook(StatusType error)
  */
 void Task_Startup(void)
 {
-    UART_Print_P(PSTR("\r\nEROS reference demo\r\n"));
-    UART_Print_P(PSTR("reset cause MCUSR=0x"));
+    Uart_Print_P(PSTR("\r\nEROS reference demo\r\n"));
+    Uart_Print_P(PSTR("reset cause MCUSR=0x"));
     /* WDRF/BORF/EXTRF/PORF. Caveat: meaningful on old-bootloader
      * (ATmegaBOOT) boards and bare chips; Optiboot clears MCUSR before
      * jumping to the application, so those boards always report 0x00
      * (Optiboot stashes the value in r2, which is not standardised). */
-    UART_PrintHex8(os_resetCause);
-    UART_Print_P(PSTR("  commands: ON | OFF | STAT\r\n"));
+    Uart_PrintHex8(os_resetCause);
+    Uart_Print_P(PSTR("  commands: ON | OFF | STAT\r\n"));
 
     /* Relative alarms fire <increment> ticks from now, then cyclically.
      * The SetAbsAlarm variant is shown for the 500 ms channel: the

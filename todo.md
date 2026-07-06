@@ -188,10 +188,25 @@ with it and are migrated separately, not by a blind repo-wide rename).
       reference-demo (budget gates) + fixtures, `avr-nm` confirms `Adc_*` symbols.
       Note: kept the AUTOSAR *group* API (`Adc_ReadGroup`) out — single-channel
       blocking `Adc_ReadChannel` matches the 8-bit target; documented.
-- [ ] **Remaining MCAL/CDD modules** (pwm/spi/i2c/gpt/icu/dio/…) → AUTOSAR names,
-      one coherent module at a time; `pwm` needs the `reference-demo` app-local
-      driver untangled first (shared `drivers/pwm.c` is used by no built fixture
-      today — verify before renaming).
+- [x] **MCAL naming — Pwm + Uart** (increment 2): shared `drivers/pwm.c` →
+      `Pwm_Init`/`Pwm_SetDutyCycle`/`Pwm_GetDutyCycle` (duty stays permille,
+      documented); `reference-demo/uart.c` + callers → `Uart_*` (geometry macros
+      `UART_TX_SIZE/RX_SIZE` unchanged). Word-boundary renames guarded Timer0's
+      `T0PWM_Init` and the `-D` macros. reference-demo (heavy UART + PWM user)
+      builds byte-identical with budget gates; `drivers/pwm.c` compiles with
+      `Pwm_*`; `test_uart` links `Uart_*`. **Deliberately left `reference-demo`'s
+      app-local `pwm.c` as `PWM_*`** — it is a near-duplicate of the shared driver,
+      so renaming both trips SonarCloud's new-code duplication gate.
+- [ ] **Consolidate the duplicate Timer1 PWM driver** — `reference-demo/pwm.c` is
+      a fixed-1 kHz near-copy of the configurable `drivers/pwm.c`. Make the demo
+      use the shared driver (delete the app-local copy; the `pwm:` peripheral
+      resolves to `drivers/pwm.c` at its 1 kHz defaults) so PWM is `Pwm_*`
+      everywhere and the duplication is gone. Touches the reference-demo Makefile
+      golden + include path — verify the image stays within budget.
+- [ ] **Remaining standalone drivers** (spi/i2c/eeprom/icp/acomp/timer0) →
+      AUTOSAR names. Lower value (non-RTE, non-demo; only their simavr tests use
+      them); prefix/macro hazards (`SPI_MODE*`, `I2C_SPEED`, `ADC_REF_*`) mean
+      per-function renames. `ExtInt_`/`PcInt_` already conform.
 - [ ] Restructure toward the AUTOSAR topology dirs: MCAL, Services (EcuM-like
       startup, Dem-like error sink, Com-like IPC over the mailbox+pool),
       ComplexDeviceDriver (uart/watchdog) — file moves + Makefile path churn.

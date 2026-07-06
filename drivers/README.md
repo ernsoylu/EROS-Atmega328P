@@ -9,15 +9,28 @@ with atomic fetch functions. Blocking calls are hardware-bounded or
 timeout-capped so each has a documented WCET for the task budget table.
 
 **MCAL naming (Phase 7, in progress).** Drivers are migrating to
-AUTOSAR-MCAL-style module prefixes — `<Mod>_<Verb>` in MixedCase. The ADC
-module leads: `Adc_Init` / `Adc_ReadChannel` (was `ADC_Init` / `ADC_Read`),
-plus `Adc_ReadVccMillivolts` / `Adc_ReadTempRaw`; the RTE generator
-(`bind.py` / `emit/rte.py`) and the MCU profiles emit these names. Semantics
-are unchanged (single-channel blocking read; the AUTOSAR group/buffer API is
-not adopted on this 8-bit target). The remaining modules and the physical
-MCAL/Services/CDD directory topology follow in later increments; note
-`reference-demo/`'s app-local `pwm.c`/`uart.c` keep their `PWM_*`/`UART_*`
-names (they predate the shared drivers and are compiled into that demo).
+AUTOSAR-MCAL-style module prefixes — `<Mod>_<Verb>` in MixedCase — one module
+at a time. Done so far:
+
+- **Adc** — `Adc_Init` / `Adc_ReadChannel` (was `ADC_Init` / `ADC_Read`), plus
+  `Adc_ReadVccMillivolts` / `Adc_ReadTempRaw`. Single-channel blocking read; the
+  AUTOSAR group/buffer API is not adopted on this 8-bit target.
+- **Pwm** (shared `drivers/pwm.c`) — `Pwm_Init` / `Pwm_SetDutyCycle` /
+  `Pwm_GetDutyCycle` (was `PWM_*`). Duty stays **permille (0..1000)**, not
+  AUTOSAR's 0..0x8000 — documented deviation. This is the RTE-bound driver
+  (`bind.py` / `emit/rte.py` emit these names).
+- **Uart** (`reference-demo/uart.c`) — `Uart_Init` / `Uart_PutChar` /
+  `Uart_Print{,_P,U16,Hex8}` / `Uart_GetChar` / `Uart_TxDropped` (was `UART_*`).
+  The `UART_TX_SIZE` / `UART_RX_SIZE` geometry macros keep their names (config,
+  not interface).
+
+`reference-demo/`'s app-local `pwm.c` deliberately **keeps `PWM_*`**: it is a
+near-duplicate of the shared driver (a fixed-1 kHz variant), so renaming it too
+would just flag the pre-existing duplication — consolidating the two Timer1 PWM
+drivers is a separate cleanup. `Timer0` PWM stays `T0PWM_*` (distinct module);
+`ExtInt_*` / `PcInt_*` already conform. Still legacy: `SPI_*`, `I2C_*`, `EE_*`,
+`ICP_*`, `ACOMP_*`. The physical MCAL/Services/CDD directory topology and
+`<Mod>_MainFunction_<rate>ms` task wiring follow in later increments.
 
 | Driver | Peripheral | Nano pins | ISRs | WCET notes |
 |---|---|---|---|---|

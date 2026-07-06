@@ -20,11 +20,11 @@
 
 static uint16_t pwmDutyPermille;
 
-void PWM_Init(void)
+void Pwm_Init(void)
 {
     DDRB  |= (uint8_t)(1u << PB1);              /* OC1A output          */
     PORTB &= (uint8_t)~(1u << PB1);
-    /* Boot at true 0%: OC1A disconnected (see PWM_SetDutyPermille). */
+    /* Boot at true 0%: OC1A disconnected (see Pwm_SetDutyCycle). */
     TCCR1A = (uint8_t)(1u << WGM11);
     TCCR1B = (uint8_t)((1u << WGM13) | (1u << WGM12) | (PWM_CS));
     ICR1   = PWM_TOP;                           /* mode 14: ICR1 = TOP  */
@@ -32,7 +32,7 @@ void PWM_Init(void)
     pwmDutyPermille = 0u;
 }
 
-void PWM_SetDutyPermille(uint16_t permille)
+void Pwm_SetDutyCycle(uint16_t permille)
 {
     uint16_t ocr;
 
@@ -63,7 +63,7 @@ void PWM_SetDutyPermille(uint16_t permille)
     }
 }
 
-uint16_t PWM_GetDutyPermille(void)
+uint16_t Pwm_GetDutyCycle(void)
 {
     return pwmDutyPermille;
 }

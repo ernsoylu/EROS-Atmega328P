@@ -65,18 +65,18 @@ StatusType Asw_GetLastError(void)
 void Asw_PrintStatus(void)
 {
     (void)GetResource(RES_UART);
-    UART_Print_P(PSTR("t="));
-    UART_PrintU16(GetCounterValue());
-    UART_Print_P(PSTR(" duty="));
-    UART_PrintU16(PWM_GetDutyPermille());
-    UART_Print_P(PSTR(" run="));
-    (void)UART_PutChar((aswRampRun != 0u) ? '1' : '0');
-    UART_Print_P(PSTR(" err="));
-    UART_PrintU16((uint16_t)aswErrorCount);
-    UART_Print_P(PSTR(" lastE="));
-    UART_PrintHex8(aswLastError);
-    UART_Print_P(PSTR(" txDrop="));
-    UART_PrintU16((uint16_t)UART_TxDropped());
-    UART_Print_P(PSTR("\r\n"));
+    Uart_Print_P(PSTR("t="));
+    Uart_PrintU16(GetCounterValue());
+    Uart_Print_P(PSTR(" duty="));
+    Uart_PrintU16(PWM_GetDutyPermille());
+    Uart_Print_P(PSTR(" run="));
+    (void)Uart_PutChar((aswRampRun != 0u) ? '1' : '0');
+    Uart_Print_P(PSTR(" err="));
+    Uart_PrintU16((uint16_t)aswErrorCount);
+    Uart_Print_P(PSTR(" lastE="));
+    Uart_PrintHex8(aswLastError);
+    Uart_Print_P(PSTR(" txDrop="));
+    Uart_PrintU16((uint16_t)Uart_TxDropped());
+    Uart_Print_P(PSTR("\r\n"));
     (void)ReleaseResource(RES_UART);
 }
