@@ -138,6 +138,8 @@ def emit_makefile(s, app_dir):
                 ext_drv.append(fname)
     if s.asw_tasks and "Rte.c" not in app_srcs:
         app_srcs.append("Rte.c")
+    if getattr(s, "modes", None) and "Rte_Modes.c" not in app_srcs:
+        app_srcs.append("Rte_Modes.c")
     vpath = [s.kernel_dir]
     incs = ["-I.", f"-I{s.kernel_dir}"]
     # External driver VPATH/-I are added once, after every ext_drv is collected

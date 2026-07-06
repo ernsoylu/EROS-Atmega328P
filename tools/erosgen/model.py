@@ -400,6 +400,9 @@ class System:
                 sink.error("SIMULINK_NO_MODEL",
                            "simulink section needs a 'model' name", "simulink")
 
+        # ---- mode groups (Rte_Modes.h/.c) --------------------------------
+        self.modes = self._parse_modes(doc.get("modes", []) or [], sink)
+
         # ---- schedulability gate (codegen/README.md par.4) ---------------
         if self.periodic and all(t.period_ticks is not None for t in self.periodic):
             base = self.periodic[0].period_ticks
@@ -437,6 +440,43 @@ class System:
             out.append(m)
         # Each model becomes one synthesized OS task, so the number of models is
         # bounded by the 8-task ready-mask limit checked below - no separate cap.
+        return out
+
+    def _parse_modes(self, entries, sink):
+        """Parse the modes: list into {name, states, initial} records. Each
+        becomes a typed enum + Rte_Mode_/Rte_Switch_ accessors (emit/modes.py).
+        Validates: unique group names, C-identifier states, initial in states."""
+        out, seen = [], set()
+        for i, m in enumerate(entries):
+            where = f"modes[{i}]"
+            if not check_keys(m, "mode", where, sink):
+                continue
+            name = m.get("name")
+            if not name:
+                sink.error("MODE_NO_NAME", f"{where}: needs a 'name'", where)
+                continue
+            if name in seen:
+                sink.error("MODE_DUP_NAME", f"mode group '{name}' declared twice",
+                           where)
+            seen.add(name)
+            states = m.get("states") or []
+            if not states:
+                sink.error("MODE_NO_STATES",
+                           f"mode '{name}': needs a non-empty 'states' list", where)
+                continue
+            for st in states:
+                if not (isinstance(st, str) and st[:1].isalpha()
+                        and st.replace("_", "").isalnum()):
+                    sink.error("MODE_BAD_STATE",
+                               f"mode '{name}': state '{st}' is not a valid C "
+                               "identifier", where)
+            initial = m.get("initial")
+            if initial is not None and initial not in states:
+                sink.error("MODE_BAD_INITIAL",
+                           f"mode '{name}': initial '{initial}' is not one of its "
+                           f"states {states}", where)
+            out.append({"name": name, "states": list(states),
+                        "initial": initial or (states[0] if states else None)})
         return out
 
     def _parse_gpio(self, entries, sink):

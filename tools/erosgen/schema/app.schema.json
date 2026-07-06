@@ -14,7 +14,8 @@
     "pool": {"$ref": "#/$defs/pool"},
     "gpio": {"type": "array", "items": {"$ref": "#/$defs/gpio"}},
     "simulink": {"$ref": "#/$defs/simulink"},
-    "models": {"type": "array", "items": {"$ref": "#/$defs/model"}}
+    "models": {"type": "array", "items": {"$ref": "#/$defs/model"}},
+    "modes": {"type": "array", "items": {"$ref": "#/$defs/mode"}}
   },
   "$defs": {
     "system": {
@@ -236,6 +237,17 @@
         "type": {"type": "string"},
         "value": {"type": ["number", "string", "boolean"]},
         "description": {"type": "string"}
+      }
+    },
+    "mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "states"],
+      "properties": {
+        "name": {"type": "string", "x-eros-code": "MODE_NO_NAME"},
+        "states": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+          "x-eros-code": "MODE_NO_STATES"},
+        "initial": {"type": "string"}
       }
     }
   }

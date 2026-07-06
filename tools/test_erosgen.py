@@ -1104,7 +1104,7 @@ def test_allowed_keys_derived_from_schema_matches_contract():
     assert ALLOWED_KEYS == erosgen.section_keys()      # derivation is live
     expected = {
         "doc": {"system", "sources", "peripherals", "tasks", "resources",
-                "pool", "gpio", "simulink", "models"},
+                "pool", "gpio", "simulink", "models", "modes"},
         "system": {"name", "mcu", "kernel_dir", "drivers_dir", "tick_hz",
                    "alarm_max_offset", "stack", "hooks", "budget"},
         "stack": {"canary", "guard_bytes", "paint_margin"},
@@ -1128,6 +1128,7 @@ def test_allowed_keys_derived_from_schema_matches_contract():
         "port": {"signal", "driver", "channel", "port", "bit", "slope",
                  "offset", "type", "description", "source"},
         "calibration": {"name", "type", "value", "description"},
+        "mode": {"name", "states", "initial"},
     }
     assert ALLOWED_KEYS == expected
 
@@ -1276,6 +1277,36 @@ def test_asw_asw_connection_cross_rate():
     assert not any(d.code == "CONN_ORDER" for d in sink.items)
     rte = emit_rte_c(rms, "app.yaml", integrated=True)
     assert "RTE_CFG_SPEED_Z_SIGNAL = OUT_Speed_Z;" in rte        # latched copy
+
+
+def test_mode_management_emit_and_validate():
+    """A modes: group generates a typed enum + Rte_Mode_/Rte_Switch_ accessors;
+    validation rejects empty states, an initial not in states, and dup names."""
+    from erosgen.emit import emit_modes_c, emit_modes_h
+    modes = [{"name": "OpMode", "states": ["Startup", "Run", "Shutdown"],
+              "initial": "Startup"}]
+    h = emit_modes_h(modes, "app.yaml")
+    assert "typedef enum" in h and "} Rte_ModeType_OpMode;" in h
+    assert "RTE_MODE_OPMODE_RUN" in h
+    assert "Rte_ModeType_OpMode Rte_Mode_OpMode(void);" in h
+    assert "void Rte_Switch_OpMode(Rte_ModeType_OpMode mode);" in h
+    c = emit_modes_c(modes, "app.yaml")
+    assert ("static Rte_ModeType_OpMode rte_mode_OpMode = "
+            "RTE_MODE_OPMODE_STARTUP;") in c
+    assert "return rte_mode_OpMode;" in c and "rte_mode_OpMode = mode;" in c
+
+    def codes(m):
+        doc = {"system": {"name": "t"},
+               "tasks": [{"name": "a", "period_ms": 10, "wcet_ms": 1}],
+               "resources": [{"name": "r", "users": ["a"]}], "modes": m}
+        return {d.code for d in erosgen.collect_diagnostics(doc, Path("x"))}
+    assert "MODE_NO_STATES" in codes([{"name": "M", "states": []}])
+    assert "MODE_BAD_INITIAL" in codes([{"name": "M", "states": ["A"],
+                                         "initial": "Z"}])
+    assert "MODE_DUP_NAME" in codes([{"name": "M", "states": ["A"]},
+                                     {"name": "M", "states": ["B"]}])
+    assert not (codes([{"name": "M", "states": ["A", "B"], "initial": "B"}])
+                & {"MODE_NO_STATES", "MODE_BAD_INITIAL", "MODE_DUP_NAME"})
 
 
 def _run_standalone():

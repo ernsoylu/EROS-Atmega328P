@@ -243,8 +243,14 @@ with it and are migrated separately, not by a blind repo-wide rename).
       rate-transition layer (a queue would be over-engineering; the kernel has no
       task<->task races by design). `CONN_ORDER` warns if the producer isn't
       scheduled first. Covered by `test_asw_asw_connection_cross_rate`.
-- [ ] Mode management (`Rte_Mode`/`Rte_Switch`) — fits the existing chained
-      `TASK_STATUS`/`TASK_REPORT` pattern.
+- [x] **Mode management** (increment 3): a `modes:` section declares mode groups
+      (`{name, states, initial}`); the generator emits `Rte_Modes.h`/`.c` — a
+      typed `Rte_ModeType_<grp>` enum + a current-mode variable with
+      `Rte_Mode_<grp>()` (get) / `Rte_Switch_<grp>()` (set), wired into the
+      Makefile. Validated (`MODE_NO_STATES`/`MODE_BAD_INITIAL`/`MODE_DUP_NAME`);
+      schema field. The minimal AUTOSAR mode primitive — OnEntry/OnExit runnables
+      + transition tables are deliberately out of scope for this non-preemptive
+      kernel (tasks chain via ChainTask; a shared mode variable is enough).
 - [ ] Explicit runnable-to-task mapping so one SWC's multiple runnables can map
       to different rates (today one task = one rate).
 - [x] **RTE driver coverage — timer0_pwm** (increment 1): output ports can now

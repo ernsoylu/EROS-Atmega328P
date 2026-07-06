@@ -31,8 +31,9 @@ from .asw import resolve_asw_tasks
 from .constants import MAIN_C, __version__
 from .diagnostics import Diagnostics
 from .emit import (emit_asw_skeleton, emit_config_c, emit_config_h,
-                   emit_main_skeleton, emit_makefile, emit_os_gen_h,
-                   emit_rte_c, emit_rte_cfg_h, emit_rte_h, emit_rte_swc_h)
+                   emit_main_skeleton, emit_makefile, emit_modes_c,
+                   emit_modes_h, emit_os_gen_h, emit_rte_c, emit_rte_cfg_h,
+                   emit_rte_h, emit_rte_swc_h)
 from .emit.asw import ASW_FILES
 from .errors import ConfigError
 from .merge import has_markers
@@ -167,6 +168,12 @@ def main(argv):
             for rm in rte_rms:
                 outputs.append((app_dir / f"Rte_{rm.name}.h",
                                 emit_rte_swc_h(rm, src.name), True))
+        # Mode groups (independent of the RTE): typed enum + get/switch accessors.
+        if s.modes:
+            outputs.append((app_dir / "Rte_Modes.h",
+                            emit_modes_h(s.modes, src.name), True))
+            outputs.append((app_dir / "Rte_Modes.c",
+                            emit_modes_c(s.modes, src.name), True))
     except ConfigError as e:
         print(e)
         return 1
