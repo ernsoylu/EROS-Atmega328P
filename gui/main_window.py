@@ -7,6 +7,9 @@ memory budget; a task -> its timing; a model -> its in/out interfaces with inlin
 peripheral binding. Bottom: tabs for the live problem list and the build/message
 console. No domain logic - every fact comes from the ProjectModel / the engine.
 """
+import sys
+import traceback
+
 from PySide6.QtCore import QProcess, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
@@ -38,6 +41,24 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_toolbar()
         self.refresh()
+
+    def install_excepthook(self):
+        """Route unhandled slot exceptions to the Console pane instead of letting
+        PySide6 (>=6.5) terminate the whole app. Called by the app entry point
+        (not in __init__, so importing/testing the window leaves sys.excepthook
+        alone)."""
+        sys.excepthook = self._excepthook
+
+    def _excepthook(self, etype, value, tb):
+        text = "".join(traceback.format_exception(etype, value, tb))
+        sys.stderr.write(text)
+        try:
+            self.tabs.setCurrentWidget(self.console)
+            self._log("⚠ internal error — the action was aborted, the app "
+                      "is still running. Please report this trace:\n"
+                      + text.rstrip())
+        except Exception:
+            pass
 
     # ---- construction ---------------------------------------------------
     def _build_ui(self):
@@ -232,7 +253,13 @@ class MainWindow(QMainWindow):
             page = self._page_resource(self._sel[1])
         else:
             page = QLabel("Select a node on the left.")
+        # Swap via takeWidget + deleteLater rather than letting setWidget delete
+        # the old page synchronously: a page is never freed while one of its
+        # child widgets is still mid-signal (which would use-after-free / crash).
+        old = self.inspector.takeWidget()
         self.inspector.setWidget(page)
+        if old is not None:
+            old.deleteLater()
 
     def _page_system(self):
         """MCU target + its facts + the static-RAM budget. Changing the MCU here
