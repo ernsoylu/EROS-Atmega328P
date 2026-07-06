@@ -232,23 +232,27 @@ class ProjectModel:
         'too much RAM' is visible before building. None if the config is invalid.
         NOTE: true flash/RAM needs a compile (avr-size); this is the deliberate,
         over-counting non-LTO estimate."""
+        # Best-effort like every other live read: an incomplete config being
+        # edited can make strict System() raise more than ConfigError (a
+        # KeyError/TypeError on a half-typed field), so swallow broadly and show
+        # "config invalid" rather than crashing the panel.
         try:
             s = erosgen.System(self.plain, self.path or Path("app.yaml"))
-        except erosgen.ConfigError:
+            uart = s.peripherals.get("uart")
+            rings = 0
+            if uart is not None:
+                uart = uart or {}
+                rings = (int(uart.get("tx_ring", UART_TX_RING_DEFAULT))
+                         + int(uart.get("rx_ring", UART_RX_RING_DEFAULT)))
+            b = s.budget or {}
+            return {
+                "kernel": KERNEL_STATE_BYTES,              # SSOT: erosgen.constants
+                "arena": s.pool_block * s.pool_blocks,
+                "rings": rings,
+                "sram_total": int(b.get("sram_total", 2048)),
+            }
+        except Exception:
             return None
-        uart = s.peripherals.get("uart")
-        rings = 0
-        if uart is not None:
-            uart = uart or {}
-            rings = (int(uart.get("tx_ring", UART_TX_RING_DEFAULT))
-                     + int(uart.get("rx_ring", UART_RX_RING_DEFAULT)))
-        b = s.budget or {}
-        return {
-            "kernel": KERNEL_STATE_BYTES,                  # SSOT: erosgen.constants
-            "arena": s.pool_block * s.pool_blocks,
-            "rings": rings,
-            "sram_total": int(b.get("sram_total", 2048)),
-        }
 
     # ---- new project + editing -----------------------------------------
     def new(self, name="app", mcu="atmega328p"):

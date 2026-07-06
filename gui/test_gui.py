@@ -302,6 +302,24 @@ def test_mainwindow_priority_dropdown_interleaves_kinds():
     w.close()
 
 
+def test_mainwindow_excepthook_logs_and_survives():
+    # An unhandled slot exception must be logged to the Console (and the app
+    # kept alive) rather than terminating PySide6 (>=6.5 aborts by default).
+    from gui.main_window import MainWindow
+    _app()
+    w = MainWindow(ProjectModel())
+    w.project.new("t", "atmega328p")
+    w.refresh()
+    try:
+        raise ValueError("boom-under-test")
+    except ValueError:
+        import sys
+        w._excepthook(*sys.exc_info())      # must not re-raise
+    log = w.console.toPlainText()
+    assert "boom-under-test" in log and "internal error" in log
+    w.close()
+
+
 def test_mainwindow_system_page_mcu_change_rerenders():
     # The MCU dropdown now lives on the System page; changing it re-derives the
     # facts panel and the problem list (the fix for "MCU is not changing").
