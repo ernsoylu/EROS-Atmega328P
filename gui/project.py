@@ -11,6 +11,8 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 import erosgen
+from erosgen.constants import (KERNEL_STATE_BYTES, UART_RX_RING_DEFAULT,
+                               UART_TX_RING_DEFAULT)
 
 _yaml = YAML()          # round-trip by default (preserves comments + key order)
 _yaml.preserve_quotes = True
@@ -196,10 +198,11 @@ class ProjectModel:
         rings = 0
         if uart is not None:
             uart = uart or {}
-            rings = int(uart.get("tx_ring", 128)) + int(uart.get("rx_ring", 64))
+            rings = (int(uart.get("tx_ring", UART_TX_RING_DEFAULT))
+                     + int(uart.get("rx_ring", UART_RX_RING_DEFAULT)))
         b = s.budget or {}
         return {
-            "kernel": 35,                                  # matches report()
+            "kernel": KERNEL_STATE_BYTES,                  # SSOT: erosgen.constants
             "arena": s.pool_block * s.pool_blocks,
             "rings": rings,
             "sram_total": int(b.get("sram_total", 2048)),

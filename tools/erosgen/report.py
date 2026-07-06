@@ -1,5 +1,8 @@
 """End-of-run report: the pre-flash schedulability + static-RAM plan."""
 
+from .constants import (KERNEL_STATE_BYTES, UART_RX_RING_DEFAULT,
+                        UART_TX_RING_DEFAULT)
+
 
 def report(s):
     print(f"erosgen: system '{s.name}' ({s.src})")
@@ -21,13 +24,14 @@ def report(s):
           f"{base.period_ticks} ticks  OK")
     print("  static RAM plan:")
     arena = s.pool_block * s.pool_blocks
-    print("    kernel state          ~35 B")
+    print(f"    kernel state          ~{KERNEL_STATE_BYTES} B")
     print(f"    pool arena            {arena} B "
           f"({s.pool_blocks} x {s.pool_block})")
     uart = s.peripherals.get("uart")
     if uart is not None:
         uart = uart or {}
-        tx, rx = int(uart.get("tx_ring", 128)), int(uart.get("rx_ring", 64))
+        tx = int(uart.get("tx_ring", UART_TX_RING_DEFAULT))
+        rx = int(uart.get("rx_ring", UART_RX_RING_DEFAULT))
         print(f"    uart rings            {tx + rx} B (TX {tx} + RX {rx})")
     for w in s.warnings:
         print(f"  WARNING: {w}")

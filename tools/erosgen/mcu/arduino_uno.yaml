@@ -1,0 +1,17 @@
+# =====================================================================
+# Arduino Uno profile for erosgen.
+#
+# The Uno is an ATmega328P with the same header pinout as the Nano, so it
+# inherits the whole atmega328p chip profile (ports, aliases, peripherals,
+# pin ownership, drivers) via `extends`. Only the board differs: the Uno's
+# Optiboot bootloader flashes at 115200, not the Nano profile's
+# old-bootloader 57600. `extends` keeps the chip facts in one place -
+# profile.py merges the base + these overrides.
+# =====================================================================
+name: arduino_uno
+extends: atmega328p
+
+toolchain:
+  avrdude:
+    baud: 115200
+    baud_note: "Arduino Uno (Optiboot)"

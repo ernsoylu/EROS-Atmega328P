@@ -93,6 +93,27 @@ models:
     # (ImportFromFile). appKnbSwt exports them, so none here.
 ```
 
+**Optional scaling (`slope` / `offset`).** A port carries the **raw** driver
+value by default — scaling normally lives in Simulink (as `IN_KnbVal_Z` does).
+A non-boolean port may instead opt into a generated linear calibration by
+declaring `slope` (and an optional `offset`, default 0):
+
+```yaml
+      in:
+        - signal: IN_Volt_mV
+          driver: adc
+          channel: 0
+          slope: 4.887586       # port = raw*slope + offset (0..1023 -> 0..5000 mV)
+```
+
+`erosgen` emits `RTE_CFG_<PORT>_SLOPE` / `_OFFSET` #defines in `Rte_Cfg.h` and
+calibrates in the port adapter — a `Rte_Read_*` returning the signal's C type
+(`port = raw*slope + offset`), or, on an output, a `Rte_Write_*` converting the
+port back to the driver value (`permille = port*slope + offset` for pwm). The
+math is integer (`int32_t`) when both constants are ints, single-precision
+`float` otherwise. Boolean (`dio`) ports are rejected (`SCALING_UNSUPPORTED`) —
+a linear scale is meaningless on a 1-bit signal.
+
 From this one block, `erosgen` generates `Rte.h` / `Rte_Cfg.h` / `Rte.c` (the
 per-port `Rte_Read_*/Rte_Write_*` adapters, `Rte_Init`, and a `Task_<model>`
 body that runs the runnable and `TerminateTask()`s), and wires the model as
@@ -106,10 +127,12 @@ driver, `emit/rte.py` emits the C.
 python3 tools/erosgen.py tools/fixtures/model_app/app.yaml   # a complete app
 ```
 
-The one-model-per-app case is supported today (single RTE); the hand-written
-`rte/` here stays as the worked reference and the simavr test's fixture. Its
-CI gate compiles a generated `model_app` firmware with `avr-gcc -Werror`.
-Calibration assignment (`ImportFromFile` SWCs) and multi-model apps are not
+Multiple SWCs in one app share a single combined RTE — a `Task_<model>` per SWC
+and per-model `RTE_CFG_<MODEL>_*` identity defines, with port stems required
+unique across models (they share the `RTE_CFG_<TAG>_*` namespace). The
+hand-written `rte/` here stays as the worked reference and the simavr test's
+fixture. Its CI gate compiles a generated `model_app` firmware with
+`avr-gcc -Werror`. Calibration assignment (`ImportFromFile` SWCs) is not
 generated yet. The GUI (`gui/`) exposes this via a **Model** menu — add a
 codegen model and bind its ports to peripherals interactively.
 

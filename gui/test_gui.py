@@ -136,6 +136,27 @@ def test_mainwindow_mcu_combo_live():
     w.close()
 
 
+def test_add_task_dialog_rejects_bad_numbers(monkeypatch):
+    # Non-numeric period/wcet used to throw ValueError straight out of the Qt
+    # slot; now it warns and adds nothing.
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+    _app()
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    w = MainWindow(p)
+    before = len(p.tasks())
+    monkeypatch.setattr(QInputDialog, "getText",
+                        lambda *a, **k: ("ctrl, ten, 1", True))
+    warned = {}
+    monkeypatch.setattr(QMessageBox, "warning",
+                        lambda *a, **k: warned.setdefault("hit", True))
+    w.add_task_dialog()                 # must not raise
+    assert warned.get("hit")            # the user was warned
+    assert len(p.tasks()) == before     # no bogus task was added
+    w.close()
+
+
 def test_mainwindow_surfaces_errors():
     from gui.main_window import MainWindow
     _app()

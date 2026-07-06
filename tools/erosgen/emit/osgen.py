@@ -4,6 +4,7 @@ Kept in lockstep with the YAML so adding a task/pin propagates into the build
 without editing hand-written main.c (the regeneration-drift fix).
 """
 
+from ..backends import bit_clear, bit_set
 from ..constants import GENERATED_BANNER, INCLUDE_EROS_H
 
 
@@ -41,19 +42,17 @@ def emit_os_gen_h(s):
     for g in s.gpio:
         port = g["pin"][1]      # B/C/D
         bit = g["pin"]          # e.g. PB5 - avr-libc defines the bit index
+        label = g["name"] or g["pin"]
         if g["dir"] == "out":
-            L.append(f"    DDR{port} |= (uint8_t)(1u << {bit});"
-                     f"  /* {g['name'] or g['pin']} output */")
+            L.append(f"    {bit_set(f'DDR{port}', bit)};  /* {label} output */")
             if g["init"]:
-                L.append(f"    PORT{port} |= (uint8_t)(1u << {bit});")
+                L.append(f"    {bit_set(f'PORT{port}', bit)};")
             else:
-                L.append(f"    PORT{port} &= (uint8_t)~(1u << {bit});")
+                L.append(f"    {bit_clear(f'PORT{port}', bit)};")
         else:
-            L.append(f"    DDR{port} &= (uint8_t)~(1u << {bit});"
-                     f"  /* {g['name'] or g['pin']} input */")
+            L.append(f"    {bit_clear(f'DDR{port}', bit)};  /* {label} input */")
             if g["pullup"]:
-                L.append(f"    PORT{port} |= (uint8_t)(1u << {bit});"
-                         "  /* pull-up */")
+                L.append(f"    {bit_set(f'PORT{port}', bit)};  /* pull-up */")
     for p in sorted(s.peripherals):
         if p in s.profile.driver_init:
             L.append(f"    {s.profile.driver_init[p]}")

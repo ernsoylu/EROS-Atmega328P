@@ -47,9 +47,12 @@ def _capacity(ctype):
     return (1 << (width - (1 if signed else 0))) - 1
 
 
-def check_binding(signal, direction, driver_name, params, sink, where):
+def check_binding(signal, direction, driver_name, params, sink, where,
+                  scaled=False):
     """Validate one port binding against its parsed Signal. Reports via `sink`
-    and returns the DriverSpec (or None if the driver is unknown)."""
+    and returns the DriverSpec (or None if the driver is unknown). `scaled`
+    suppresses the raw-range truncation warning: a calibrated port converts the
+    value, so the signal type no longer has to fit the driver's raw range."""
     drv = DRIVERS.get(driver_name)
     if drv is None:
         sink.error("UNKNOWN_DRIVER",
@@ -81,8 +84,9 @@ def check_binding(signal, direction, driver_name, params, sink, where):
         sink.error("TYPE_TOO_NARROW",
                    f"{where}: {signal.ctype} (max {cap}) cannot hold driver "
                    f"'{driver_name}' range 0..{drv.vmax}", where)
-    elif direction == "out" and not drv.boolean and cap > drv.vmax:
-        # signal -> valued actuator (pwm): wider signal truncates.
+    elif direction == "out" and not drv.boolean and not scaled and cap > drv.vmax:
+        # signal -> valued actuator (pwm): wider signal truncates (unless a
+        # calibration converts it - then the raw range no longer has to fit).
         sink.warning("RANGE_TRUNCATION",
                      f"{where}: {signal.ctype} (max {cap}) exceeds driver "
                      f"'{driver_name}' range 0..{drv.vmax}; value is truncated",

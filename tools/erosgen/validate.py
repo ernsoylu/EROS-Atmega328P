@@ -31,7 +31,8 @@ ALLOWED_KEYS = {
     "model":      {"name", "codegen_dir", "init", "runnable", "rate_ms",
                    "wcet_ms", "ports"},
     "ports":      {"in", "out"},
-    "port":       {"signal", "driver", "channel", "port", "bit"},
+    "port":       {"signal", "driver", "channel", "port", "bit",
+                   "slope", "offset"},
 }
 
 

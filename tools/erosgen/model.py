@@ -15,7 +15,7 @@ build in a safety net so an un-guarded path degrades to one INTERNAL diagnostic.
 import difflib
 import math
 
-from .constants import MAIN_C
+from .constants import MAIN_C, UART_RX_RING_DEFAULT, UART_TX_RING_DEFAULT
 from .diagnostics import Diagnostic, Diagnostics
 from .mcu import load_profile
 from .validate import check_keys, is_pow2, normalize_pin
@@ -242,7 +242,9 @@ class System:
             if not check_keys(uart, "uart", "peripherals.uart", sink):
                 uart = {}
             for ring in ("tx_ring", "rx_ring"):
-                v = int(uart.get(ring, 128 if ring == "tx_ring" else 64))
+                default = (UART_TX_RING_DEFAULT if ring == "tx_ring"
+                          else UART_RX_RING_DEFAULT)
+                v = int(uart.get(ring, default))
                 if not (is_pow2(v) and 2 <= v <= 256):
                     sink.error("UART_RING",
                                f"uart {ring} must be a power of two, 2..256",
@@ -296,10 +298,8 @@ class System:
                            f"model '{name}': needs 'rate_ms'", f"model '{name}'")
                 continue
             out.append(m)
-        if len(out) > 1:
-            sink.error("MULTI_MODEL",
-                       "only one model per app for now (single RTE)", "models")
-            out = out[:1]
+        # Each model becomes one synthesized OS task, so the number of models is
+        # bounded by the 8-task ready-mask limit checked below - no separate cap.
         return out
 
     def _parse_gpio(self, entries, sink):

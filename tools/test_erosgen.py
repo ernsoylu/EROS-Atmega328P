@@ -211,6 +211,48 @@ def test_mcu_profile_loads_atmega328p():
         raise AssertionError("expected FileNotFoundError for unknown MCU")
 
 
+def test_arduino_uno_extends_atmega328p():
+    # The Uno is a 328P board: it inherits the whole chip profile via `extends`
+    # and overrides only the flash baud (Optiboot 115200, not the Nano's 57600).
+    from erosgen.mcu import load_profile
+    uno = load_profile("arduino_uno")
+    assert uno.name == "arduino_uno"
+    assert uno.mcu_gcc == "atmega328p"                 # same silicon -> -mmcu
+    assert uno.avrdude_part == "m328p"                 # inherited
+    assert uno.avrdude_programmer == "arduino"         # inherited
+    assert uno.avrdude_baud == 115200                  # overridden
+    # chip facts inherited unchanged from atmega328p
+    assert uno.ports == "BCD"
+    assert uno.aliases["D13"] == "PB5"
+    assert uno.peripheral_pins["spi"] == ["PB2", "PB3", "PB4", "PB5"]
+    # the base profile is untouched (still the old-bootloader default)
+    assert load_profile("atmega328p").avrdude_baud == 57600
+
+
+def test_arduino_uno_makefile_targets_115200():
+    from erosgen import System
+    from erosgen.emit import emit_makefile
+    doc = {"system": {"name": "u", "mcu": "arduino_uno", "kernel_dir": "../kernel"},
+           "tasks": [{"name": "a", "period_ms": 10, "wcet_ms": 1}],
+           "resources": [{"name": "r", "users": ["a"]}]}
+    s = System(doc, Path("app.yaml"))
+    assert s.mcu == "arduino_uno" and s.profile.mcu_gcc == "atmega328p"
+    mk = emit_makefile(s, Path(".").resolve())
+    assert "BAUD    ?= 115200" in mk           # Uno flash baud
+    assert "-p m328p -c arduino" in mk         # 328P part, arduino programmer
+    assert "MCU     := atmega328p" in mk       # still compiles as a 328P
+
+
+def test_profile_extends_cycle_guard():
+    from erosgen.mcu.profile import _resolve
+    try:
+        _resolve("atmega328p", {"atmega328p"})  # already on the resolve stack
+    except ValueError as e:
+        assert "cycle" in str(e)
+    else:
+        raise AssertionError("expected an extends-cycle ValueError")
+
+
 def test_parse_ert_appknbswt():
     from erosgen.parse import parse_model
     mi = parse_model(REPO / "codegen" / "appKnbSwt_ert_rtw", "appKnbSwt")
@@ -354,6 +396,202 @@ def test_pwm_rte_adapter():
     assert "PWM_SetDutyPermille(permille)" in c
     assert '#include "pwm.h"' in c and "PWM_Init();" in c
     assert "RTE_CFG_DUTY_PM_SIGNAL" in emit_rte_cfg_h(rm, "app.yaml")
+
+
+def _scaled_adc_model(slope, offset):
+    from erosgen.models import BoundPort, ResolvedModel
+    from erosgen.parse import Signal
+    port = BoundPort(Signal("IN_KnbVal_Z", "uint16_T", "in"), "in", "adc",
+                     {"channel": 0}, "KnbVal_Z", slope, offset)
+    return ResolvedModel("knb", "knb_initialize", "knb_Runnable", 10,
+                         [port], [], None)
+
+
+def test_rte_scaling_integer_math():
+    from erosgen.emit.rte import emit_rte_c, emit_rte_cfg_h
+    rm = _scaled_adc_model(5, -3)          # both ints -> integer (int32_t) path
+    cfg, c = emit_rte_cfg_h(rm, "app.yaml"), emit_rte_c(rm, "app.yaml", True)
+    # slope/offset become auditable declarative #defines, not inline literals
+    assert "RTE_CFG_KNBVAL_Z_SLOPE" in cfg and "RTE_CFG_KNBVAL_Z_OFFSET" in cfg
+    assert "5" in cfg and "-3" in cfg
+    # the read adapter returns the signal's C type and calibrates via int32_t
+    assert "static uint16_t Rte_Read_KnbVal_Z(void)" in c
+    assert "uint16_t raw = ADC_Read(RTE_CFG_KNBVAL_Z_ADC_CH);" in c
+    assert ("(int32_t)raw * RTE_CFG_KNBVAL_Z_SLOPE + RTE_CFG_KNBVAL_Z_OFFSET"
+            in c)
+
+
+def test_rte_scaling_float_math():
+    from erosgen.emit.rte import emit_rte_c, emit_rte_cfg_h
+    rm = _scaled_adc_model(0.1, 1.5)       # a float -> single-precision path
+    cfg, c = emit_rte_cfg_h(rm, "app.yaml"), emit_rte_c(rm, "app.yaml", True)
+    assert "0.1f" in cfg and "1.5f" in cfg   # real32 literals, not doubles
+    assert "(float)raw * RTE_CFG_KNBVAL_Z_SLOPE + RTE_CFG_KNBVAL_Z_OFFSET" in c
+
+
+def _resolve_ports(ports):
+    """resolve_models over the real appKnbSwt ERT dir with the given ports:
+    block. Returns (resolved_models, {diagnostic codes})."""
+    from erosgen import Diagnostics
+    from erosgen.models import resolve_models
+    doc = {"models": [{"name": "appKnbSwt", "rate_ms": 10,
+                       "runnable": "appKnbSwt_Runnable",
+                       "codegen_dir": str(REPO / "codegen" / "appKnbSwt_ert_rtw"),
+                       "ports": ports}]}
+    sink = Diagnostics(strict=False)
+    rms = resolve_models(doc, Path("."), sink)
+    return rms, {d.code for d in sink.items}
+
+
+def test_scaling_end_to_end_input():
+    rms, codes = _resolve_ports({"in": [{"signal": "IN_KnbVal_Z", "driver": "adc",
+                                         "channel": 0, "slope": 2, "offset": 1}]})
+    assert "SCALING_UNSUPPORTED" not in codes and "SCALING_NOT_NUMBER" not in codes
+    assert rms[0].inputs[0].scaled
+
+
+def test_scaling_rejected_on_boolean_driver():
+    # OUT_Led1_B is a dio (boolean) port: a linear scale is meaningless -> loud.
+    _, codes = _resolve_ports({"out": [{"signal": "OUT_Led1_B", "driver": "dio",
+                                        "port": "B", "bit": 5, "slope": 2}]})
+    assert "SCALING_UNSUPPORTED" in codes
+
+
+def test_rte_scaling_output_pwm():
+    from erosgen.emit.rte import emit_rte_c, emit_rte_cfg_h
+    from erosgen.models import BoundPort, ResolvedModel
+    from erosgen.parse import Signal
+    # ASW duty in percent (0..100) -> driver permille (0..1000): slope 10.
+    port = BoundPort(Signal("OUT_Duty_Pc", "uint16_T", "out"), "out", "pwm",
+                     {}, "Duty_Pc", 10, 0)
+    rm = ResolvedModel("motor", "motor_initialize", "motor_Runnable", 20,
+                       [], [port], None)
+    cfg, c = emit_rte_cfg_h(rm, "app.yaml"), emit_rte_c(rm, "app.yaml", True)
+    assert "RTE_CFG_DUTY_PC_SLOPE" in cfg and "RTE_CFG_DUTY_PC_OFFSET" in cfg
+    # the write adapter takes the ASW value and converts it to permille
+    assert "static void Rte_Write_Duty_Pc(uint16_t value)" in c
+    assert ("uint16_t permille = (uint16_t)((int32_t)value"
+            " * RTE_CFG_DUTY_PC_SLOPE + RTE_CFG_DUTY_PC_OFFSET);" in c)
+    assert "PWM_SetDutyPermille(permille);" in c and "#error" not in c
+
+
+def test_scaling_suppresses_range_truncation():
+    from erosgen import Diagnostics
+    from erosgen.bind import check_binding
+    from erosgen.parse import Signal
+    sig = Signal("OUT_Duty_Pc", "uint16_T", "out")   # cap 65535 > pwm vmax 1000
+
+    def codes(scaled):
+        s = Diagnostics(strict=False)
+        check_binding(sig, "out", "pwm", {}, s, "port", scaled=scaled)
+        return {d.code for d in s.items}
+    assert "RANGE_TRUNCATION" in codes(False)      # unscaled: wide signal truncates
+    assert "RANGE_TRUNCATION" not in codes(True)   # scaled: the conversion handles it
+
+
+def test_scaling_rejects_non_number():
+    _, codes = _resolve_ports({"in": [{"signal": "IN_KnbVal_Z", "driver": "adc",
+                                       "channel": 0, "slope": "fast"}]})
+    assert "SCALING_NOT_NUMBER" in codes
+
+
+def test_avr_backend_gpio_idioms():
+    # The AVR backend owns the register/GPIO code-gen idioms os_gen + rte render;
+    # pin these so a future ESP32 backend has an explicit contract to match.
+    from erosgen.backends import bit_clear, bit_read, bit_set, dio_direction_init
+    assert bit_set("DDRB", "PB5") == "DDRB |= (uint8_t)(1u << PB5)"
+    assert bit_clear("PORTB", "PB5") == "PORTB &= (uint8_t)~(1u << PB5)"
+    assert bit_read("RTE_CFG_X_PIN", "RTE_CFG_X_BIT") == \
+        "(uint8_t)((RTE_CFG_X_PIN >> RTE_CFG_X_BIT) & 1u)"
+    # dio direction init: DDR/PORT operators column-aligned, output driven low
+    assert dio_direction_init("LED1_B", True) == [
+        "RTE_CFG_LED1_B_DDR  |= (uint8_t)(1u << RTE_CFG_LED1_B_BIT);",
+        "RTE_CFG_LED1_B_PORT &= (uint8_t)~(1u << RTE_CFG_LED1_B_BIT);"]
+    assert dio_direction_init("SW", False) == [
+        "RTE_CFG_SW_DDR  &= (uint8_t)~(1u << RTE_CFG_SW_BIT);"]
+
+
+def test_multi_model_end_to_end_goldens():
+    """Two SWCs in one app: two synthesized tasks/alarms and one combined RTE
+    (a Task_<model> per SWC, per-model RTE_CFG_<MODEL>_* identity defines). Pins
+    the whole multi-model output. Regenerate after an intended change:
+        uv run python tools/erosgen.py tools/fixtures/model_multi/app.yaml"""
+    from erosgen import Diagnostics, System, resolve_models
+    from erosgen.emit import (emit_config_c, emit_config_h, emit_main_skeleton,
+                              emit_makefile, emit_os_gen_h, emit_rte_c,
+                              emit_rte_cfg_h, emit_rte_h)
+    d = HERE / "fixtures" / "model_multi"
+    doc = yaml.safe_load((d / "app.yaml").read_text())
+    s = System(doc, d / "app.yaml")
+    assert s.model_task_names == {"APPKNBSWT", "MOTOR"}   # both became OS tasks
+    got = {
+        "config.h": emit_config_h(s),
+        "config.c": emit_config_c(s),
+        "Makefile": emit_makefile(s, d.resolve()),
+        "os_gen.h": emit_os_gen_h(s),
+        "main.c":   emit_main_skeleton(s),
+    }
+    sink = Diagnostics(strict=False)
+    rms = resolve_models(doc, d, sink)
+    assert [x.message for x in sink.items if x.severity == "error"] == []
+    assert len(rms) == 2
+    got["Rte.h"] = emit_rte_h(rms, "app.yaml")
+    got["Rte_Cfg.h"] = emit_rte_cfg_h(rms, "app.yaml")
+    got["Rte.c"] = emit_rte_c(rms, "app.yaml", integrated=True)
+    for name, text in got.items():
+        assert text == (d / name).read_text(), f"model_multi/{name} drifted"
+    # per-model identity is namespaced; both SWCs get a task body + alarm
+    assert "RTE_CFG_APPKNBSWT_INIT_FN" in got["Rte_Cfg.h"]
+    assert "RTE_CFG_MOTOR_RUNNABLE_FN" in got["Rte_Cfg.h"]
+    assert "void Task_appKnbSwt(void)" in got["Rte.c"]
+    assert "void Task_motor(void)" in got["Rte.c"]
+    assert "ALARM_MOTOR" in got["config.h"] and "ALARM_APPKNBSWT" in got["config.h"]
+
+
+def test_multi_model_stem_collision_rejected():
+    # Port #defines (RTE_CFG_<TAG>_*) share one namespace, so two SWCs binding a
+    # signal with the same stem must be flagged, not silently miscompiled.
+    from erosgen import Diagnostics
+    from erosgen.models import resolve_models
+    cg = str(REPO / "codegen" / "appKnbSwt_ert_rtw")
+    entry = {"name": "appKnbSwt", "codegen_dir": cg, "rate_ms": 10,
+             "runnable": "appKnbSwt_Runnable",
+             "ports": {"in": [{"signal": "IN_KnbVal_Z", "driver": "adc",
+                               "channel": 0}]}}
+    doc = {"models": [entry, dict(entry)]}   # two SWCs, same KnbVal_Z stem
+    sink = Diagnostics(strict=False)
+    resolve_models(doc, Path("."), sink)
+    assert "PORT_STEM_COLLISION" in {d.code for d in sink.items}
+
+
+def test_cli_rejects_unknown_flag():
+    # argparse exits(2) on an unknown flag instead of silently ignoring it - the
+    # old hand-rolled parser dropped any --flag it didn't recognise, so a typo'd
+    # --chekc ran a real generation instead of a dry run.
+    try:
+        erosgen.main(["erosgen", "app.yaml", "--chekc"])
+    except SystemExit as e:
+        assert e.code == 2
+    else:
+        raise AssertionError("expected SystemExit(2) for an unknown flag")
+
+
+def test_cli_version_flag():
+    try:
+        erosgen.main(["erosgen", "--version"])
+    except SystemExit as e:
+        assert e.code == 0
+    else:
+        raise AssertionError("expected SystemExit(0) for --version")
+
+
+def test_shared_budget_constants_match_report():
+    # The report's RAM plan and the constants must agree (they used to be
+    # independent literals in report.py, the Makefile emitter, and the GUI).
+    from erosgen import constants
+    assert constants.KERNEL_STATE_BYTES == 35
+    assert (constants.UART_TX_RING_DEFAULT, constants.UART_RX_RING_DEFAULT) \
+        == (128, 64)
 
 
 def _run_standalone():

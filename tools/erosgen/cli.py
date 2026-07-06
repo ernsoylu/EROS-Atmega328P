@@ -23,10 +23,11 @@ Design rules encoded here (see README.md / codegen/README.md):
     base (fastest) period - blocking, never corruption, but enforced.
 """
 
+import argparse
 import sys
 from pathlib import Path
 
-from .constants import MAIN_C
+from .constants import MAIN_C, __version__
 from .diagnostics import Diagnostics
 from .emit import (emit_asw_skeleton, emit_config_c, emit_config_h,
                    emit_main_skeleton, emit_makefile, emit_os_gen_h,
@@ -51,13 +52,27 @@ def write(path, content, check_only, overwrite=True):
     return "wrote"
 
 
+def _parse_args(argv):
+    """Parse argv[1:]. Unknown flags are rejected (argparse exits 2) instead of
+    being silently ignored, and -h/--help/--version come for free."""
+    p = argparse.ArgumentParser(
+        prog="erosgen",
+        description="EROS system configurator: compile one app.yaml into the "
+                    "static OS configuration (config.h/config.c), the "
+                    "application Makefile, ASW/main skeletons, and - for a "
+                    "models: section - the RTE (Rte.h/Rte_Cfg.h/Rte.c).")
+    p.add_argument("app_yaml", help="the application's app.yaml")
+    p.add_argument("--check", action="store_true",
+                   help="validate + report only, write nothing")
+    p.add_argument("--version", action="version",
+                   version=f"erosgen {__version__}")
+    return p.parse_args(argv[1:])
+
+
 def main(argv):
-    args = [a for a in argv[1:] if not a.startswith("--")]
-    check_only = "--check" in argv
-    if len(args) != 1:
-        print(__doc__)
-        return 2
-    src = Path(args[0]).resolve()
+    ns = _parse_args(argv)
+    check_only = ns.check
+    src = Path(ns.app_yaml).resolve()
     if not src.exists():
         print(f"erosgen: {src} not found")
         return 2
@@ -86,17 +101,17 @@ def main(argv):
                 continue  # model task body is Task_<model> in the generated Rte.c
             fname = app_dir / f"asw_{t.period_ms}ms.c"
             outputs.append((fname, emit_asw_skeleton(s, t), False))
-        # RTE generation: a models: section emits Rte.h/Rte_Cfg.h/Rte.c; the
-        # model is already wired as an OS task/alarm in config.* by System.
+        # RTE generation: a models: section emits one combined Rte.h/Rte_Cfg.h/
+        # Rte.c for every model (a Task_<model> per SWC); each is already wired
+        # as an OS task/alarm in config.* by System.
         if s.models:
             rsink = Diagnostics(strict=True)  # binding errors are fatal, like config
-            for rm in resolve_models(doc, app_dir, rsink):
-                outputs.append((app_dir / "Rte.h",
-                                emit_rte_h(rm, src.name), True))
-                outputs.append((app_dir / "Rte_Cfg.h",
-                                emit_rte_cfg_h(rm, src.name), True))
-                outputs.append((app_dir / "Rte.c",
-                                emit_rte_c(rm, src.name, integrated=True), True))
+            rms = resolve_models(doc, app_dir, rsink)
+            outputs.append((app_dir / "Rte.h", emit_rte_h(rms, src.name), True))
+            outputs.append((app_dir / "Rte_Cfg.h",
+                            emit_rte_cfg_h(rms, src.name), True))
+            outputs.append((app_dir / "Rte.c",
+                            emit_rte_c(rms, src.name, integrated=True), True))
     except ConfigError as e:
         print(e)
         return 1

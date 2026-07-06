@@ -1,0 +1,35 @@
+# End-to-end fixture: TWO Simulink SWCs wired through one combined RTE, pinning
+# the multi-model path - a Task_<model> per SWC, per-model RTE_CFG_<MODEL>_*
+# identity defines, and two MODEL_DIRs in the Makefile. appKnbSwt is the real
+# codegen; motor is a synthetic second SWC (headers under motor_ert_rtw/).
+# Generation-only golden (not CI-compiled); regenerate, never edit:
+#   uv run python tools/erosgen.py tools/fixtures/model_multi/app.yaml
+system:
+  name: multidemo
+  kernel_dir: ../../../kernel
+  drivers_dir: ../../../drivers
+  hooks: { startup: true, error: true, shutdown: true }
+
+tasks:
+  - { name: init, autostart: true, wcet_ms: 2 }   # arms the alarms
+
+resources:
+  - { name: rte, users: [appKnbSwt, motor] }      # shared RTE section
+
+models:
+  - name: appKnbSwt
+    codegen_dir: ../../../codegen/appKnbSwt_ert_rtw
+    runnable: appKnbSwt_Runnable
+    rate_ms: 10
+    wcet_ms: 2
+    ports:
+      in:  [{ signal: IN_KnbVal_Z, driver: adc, channel: 0 }]      # A0
+      out: [{ signal: OUT_Led1_B, driver: dio, port: B, bit: 5 }]  # PB5 / D13
+  - name: motor
+    codegen_dir: motor_ert_rtw
+    runnable: motor_Runnable
+    rate_ms: 20
+    wcet_ms: 2
+    ports:
+      in:  [{ signal: IN_Speed_Rpm, driver: adc, channel: 1 }]     # A1
+      out: [{ signal: OUT_Fan_B, driver: dio, port: C, bit: 0 }]   # PC0
