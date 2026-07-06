@@ -17,6 +17,27 @@ permissions:
 
 jobs:
   # -------------------------------------------------------------------
+  # Lint - ruff (style + likely bugs) + mypy (types) on the Python tools.
+  # -------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lint tools
+        run: pip install ruff mypy types-PyYAML
+
+      - name: ruff (style + likely bugs)
+        run: ruff check tools/erosgen gui tools/test_erosgen.py
+
+      - name: mypy (types)
+        run: mypy
+
+  # -------------------------------------------------------------------
   # Stage 1 - build every target and enforce the flash/RAM budget.
   # -------------------------------------------------------------------
   build:
