@@ -227,6 +227,24 @@ class ProjectModel:
         time they're read - that's the live-editing loop)."""
         self.doc.setdefault("system", {})["mcu"] = name
 
+    @property
+    def kernel_dir(self):
+        return self._system().get("kernel_dir", "")
+
+    @property
+    def drivers_dir(self):
+        return self._system().get("drivers_dir", "")
+
+    def set_dir(self, key, value):
+        """Set (or clear when blank) system.kernel_dir / system.drivers_dir - the
+        paths Generate needs to find the EROS kernel + peripheral driver sources.
+        `key` is 'kernel_dir' or 'drivers_dir'."""
+        sysd = self.doc.setdefault("system", {})
+        if value:
+            sysd[key] = value
+        else:
+            sysd.pop(key, None)
+
     def budget(self):
         """Pre-flash static-RAM plan (bytes) - what the tool's report prints, so
         'too much RAM' is visible before building. None if the config is invalid.

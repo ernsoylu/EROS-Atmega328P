@@ -302,6 +302,42 @@ def test_mainwindow_priority_dropdown_interleaves_kinds():
     w.close()
 
 
+def test_projectmodel_build_dirs():
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    assert p.kernel_dir == "" and p.drivers_dir == ""
+    p.set_dir("drivers_dir", "../drivers")
+    assert p.drivers_dir == "../drivers"
+    p.set_dir("drivers_dir", "")            # blank clears it
+    assert p.drivers_dir == ""
+
+
+def test_mainwindow_add_port_preserves_edits():
+    # Regression: adding a port used to rebuild the page from the saved doc and
+    # discard un-Applied edits to the other rows. _commit_task now runs first.
+    from unittest.mock import patch
+
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QTableWidget
+    _app()
+    p = ProjectModel()
+    p.new("t", "arduino_uno")
+    p.make_asw_task("main")
+    p.add_port("main", "in", "IN_A", "uint16_T", "")
+    w = MainWindow(p)
+    w._sel = ("asw", "main")
+    w._show_inspector()
+    table = w.inspector.widget().findChild(QTableWidget)
+    table.cellWidget(0, 3).setCurrentText("adc")     # edit driver, NOT applied
+    with patch("PySide6.QtWidgets.QInputDialog.getText",
+               return_value=("IN_B", True)):
+        w._add_port("main", "in")                     # add a second input
+    # the first row's in-progress driver survived the structural add
+    assert p.port_binding("main", "IN_A") == "adc channel=0"
+    assert {s for s, _d in p.model_port_signals("main")} == {"IN_A", "IN_B"}
+    w.close()
+
+
 def test_mainwindow_excepthook_logs_and_survives():
     # An unhandled slot exception must be logged to the Console (and the app
     # kept alive) rather than terminating PySide6 (>=6.5 aborts by default).
