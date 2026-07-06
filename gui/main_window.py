@@ -626,6 +626,12 @@ class MainWindow(QMainWindow):
                 lay.addWidget(self._uart_config_group(cfg))
             elif name == "spi":
                 lay.addWidget(self._spi_config_group(cfg))
+            elif name == "adc":
+                lay.addWidget(self._adc_config_group(cfg))
+            elif name == "i2c":
+                lay.addWidget(self._i2c_config_group(cfg))
+            elif name == "timer0_pwm":
+                lay.addWidget(self._timer0_pwm_config_group(cfg))
             else:
                 lay.addWidget(QLabel("No configurable properties yet — it's "
                                      "compiled in and ready to call."))
@@ -706,6 +712,79 @@ class MainWindow(QMainWindow):
             self.project.set_peripheral_prop("spi", "clock", clock.currentData())
             self._defer_refresh()
         apply.clicked.connect(commit)
+        form.addRow(apply)
+        return gb
+
+    def _adc_config_group(self, cfg):
+        gb = QGroupBox("ADC")
+        form = QFormLayout(gb)
+        ref = QComboBox()
+        for label, val in (("AVcc", "avcc"), ("internal 1.1 V", "internal"),
+                           ("external AREF", "aref")):
+            ref.addItem(label, val)
+        ri = ref.findData(cfg.get("reference", "avcc"))
+        ref.setCurrentIndex(ri if ri >= 0 else 0)
+        form.addRow("reference", ref)
+        presc = QComboBox()
+        for d in (2, 4, 8, 16, 32, 64, 128):
+            presc.addItem(f"/{d}", d)
+        pi = presc.findData(int(cfg.get("prescaler", 128)))
+        presc.setCurrentIndex(pi if pi >= 0 else 6)
+        form.addRow("prescaler", presc)
+        form.addRow("", QLabel("ADC clock = F_CPU / prescaler; keep it "
+                               "50–200 kHz for full 10-bit accuracy."))
+        apply = QPushButton("Apply ADC")
+
+        def commit():
+            self.project.set_peripheral_prop("adc", "reference", ref.currentData())
+            self.project.set_peripheral_prop("adc", "prescaler",
+                                             presc.currentData())
+            self._defer_refresh()
+        apply.clicked.connect(commit)
+        form.addRow(apply)
+        return gb
+
+    def _i2c_config_group(self, cfg):
+        gb = QGroupBox("I2C (TWI master)")
+        form = QFormLayout(gb)
+        speed = QComboBox()
+        for hz, label in ((100000, "100 kHz (standard)"),
+                          (400000, "400 kHz (fast)")):
+            speed.addItem(label, hz)
+        si = speed.findData(int(cfg.get("speed_hz", 100000)))
+        speed.setCurrentIndex(si if si >= 0 else 0)
+        form.addRow("bus speed", speed)
+        apply = QPushButton("Apply I2C")
+
+        def commit():
+            self.project.set_peripheral_prop("i2c", "speed_hz",
+                                             speed.currentData())
+            self._defer_refresh()
+        apply.clicked.connect(commit)
+        form.addRow(apply)
+        return gb
+
+    def _timer0_pwm_config_group(self, cfg):
+        gb = QGroupBox("Timer0 PWM (8-bit — OC0A/PD6 + OC0B/PD5)")
+        form = QFormLayout(gb)
+        freq = QSpinBox()
+        freq.setRange(1, 2000000)
+        freq.setSuffix(" Hz")
+        freq.setValue(int(cfg.get("freq_hz", 977)))
+        note = QLabel()
+
+        def refresh_note(v):
+            got = self.project.timer0_pwm_achieved(v)
+            note.setText(f"→ actual {got:.0f} Hz (8-bit: only the prescaler sets "
+                         "it, so it snaps to a few values)"
+                         if got else "→ unreachable")
+        freq.valueChanged.connect(refresh_note)
+        refresh_note(freq.value())
+        form.addRow("frequency", freq)
+        form.addRow("", note)
+        apply = QPushButton("Apply frequency")
+        apply.clicked.connect(lambda: self._set_peripheral_prop(
+            "timer0_pwm", "freq_hz", freq.value()))
         form.addRow(apply)
         return gb
 

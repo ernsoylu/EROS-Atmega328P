@@ -458,6 +458,32 @@ def test_mainwindow_spi_config_page():
     w.close()
 
 
+def test_mainwindow_adc_i2c_timer0_pages():
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QSpinBox
+    _app()
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    for name in ("adc", "i2c", "timer0_pwm"):
+        p.activate_peripheral(name, True)
+    w = MainWindow(p)
+    w._sel = ("peripheral", "adc")
+    w._show_inspector()
+    w._set_peripheral_prop("adc", "reference", "internal")
+    w._set_peripheral_prop("adc", "prescaler", 64)
+    assert p.peripheral_config("adc") == {"reference": "internal",
+                                          "prescaler": 64}
+    w._sel = ("peripheral", "i2c")
+    w._show_inspector()
+    w._set_peripheral_prop("i2c", "speed_hz", 400000)
+    assert p.peripheral_config("i2c")["speed_hz"] == 400000
+    w._sel = ("peripheral", "timer0_pwm")
+    w._show_inspector()
+    assert w.inspector.widget().findChild(QSpinBox) is not None
+    assert p.timer0_pwm_achieved(7812) == 7812.5     # /8 at 16 MHz
+    w.close()
+
+
 def test_mainwindow_peripherals_page():
     from gui.main_window import MainWindow
     from PySide6.QtWidgets import QSpinBox

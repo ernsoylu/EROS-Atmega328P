@@ -7,6 +7,13 @@
 
 #include "timer0_pwm.h"
 
+/* Mode 3 fixes TOP at 0xFF, so only the prescaler sets the frequency
+ * (F_CPU/(presc*256)). erosgen overrides -DT0PWM_CS (the TCCR0B CS02:CS00
+ * field) from peripherals.timer0_pwm.freq_hz; the default /64 is 976.6 Hz. */
+#ifndef T0PWM_CS
+#define T0PWM_CS ((uint8_t)((1u << CS01) | (1u << CS00))) /* /64 */
+#endif
+
 static uint8_t t0Duty[2];
 
 void T0PWM_Init(void)
@@ -17,7 +24,7 @@ void T0PWM_Init(void)
     /* Mode 3 (fast PWM, TOP = 0xFF), both channels disconnected =
      * true 0% at boot; prescaler /64 -> 976.6 Hz. */
     TCCR0A = (uint8_t)((1u << WGM01) | (1u << WGM00));
-    TCCR0B = (uint8_t)((1u << CS01) | (1u << CS00));
+    TCCR0B = (uint8_t)(T0PWM_CS);
     OCR0A  = 0u;
     OCR0B  = 0u;
     t0Duty[0] = 0u;
