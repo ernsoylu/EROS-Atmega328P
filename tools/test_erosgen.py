@@ -1097,7 +1097,8 @@ def test_allowed_keys_derived_from_schema_matches_contract():
         "simulink": {"model", "dir", "rate_map"},
         "uart": {"baud", "tx_ring", "rx_ring"},
         "pwm": {"freq_hz"}, "spi": {"mode", "clock"},
-        "adc": {"reference", "prescaler"}, "i2c": {"speed_hz"},
+        "adc": {"reference", "prescaler", "main_function_ms"},
+        "i2c": {"speed_hz", "main_function_ms"},
         "timer0_pwm": {"freq_hz"},
         "model": {"name", "codegen_dir", "init", "runnable", "rate_ms",
                   "wcet_ms", "ports", "order"},
@@ -1167,6 +1168,46 @@ def test_schema_cli_flag_gates_generation():
         assert not (Path(tmp) / "config.h").exists()     # aborted before write
     ok = REPO / "reference-demo" / "app.yaml"
     assert erosgen.main(["erosgen", str(ok), "--schema", "--check"]) == 0
+
+
+def test_main_function_wired_to_matching_rate_task():
+    """peripherals.<p>.main_function_ms wires <Mod>_MainFunction into the
+    matching-rate ASW task's regenerated scaffold + includes its header."""
+    from erosgen.emit import emit_asw_skeleton
+    s = _system(BASE.replace("kernel_dir: ../kernel",
+                             "kernel_dir: ../kernel, drivers_dir: ../drivers") + """
+peripherals: { adc: { main_function_ms: 10 } }
+tasks: [{ name: ctrl, period_ms: 10, wcet_ms: 1 }]
+resources: [{ name: r, users: [ctrl] }]
+""")
+    assert s.main_functions == [("adc", "Adc_MainFunction", 10)]
+    ctrl = next(t for t in s.periodic if t.name == "CTRL")
+    body = emit_asw_skeleton(s, ctrl)
+    assert '#include "adc.h"' in body
+    assert "Adc_MainFunction();" in body
+    # the call is scaffold (before the USER CODE body marker), so it regenerates
+    assert body.index("Adc_MainFunction();") < body.index("USER CODE BEGIN TASK_CTRL_BODY")
+
+
+def test_main_function_validation():
+    def codes(periph, tasks):
+        doc = {"system": {"name": "t", "mcu": "atmega328p",
+                          "drivers_dir": "../drivers"},
+               "peripherals": periph, "tasks": tasks,
+               "resources": [{"name": "r", "users": [tasks[0]["name"]]}]}
+        return {d.code for d in erosgen.collect_diagnostics(doc, Path("x"))}
+    # a driver with no MainFunction can't be scheduled
+    assert "MAIN_FUNCTION_UNSUPPORTED" in codes(
+        {"spi": {"main_function_ms": 10}},
+        [{"name": "a", "period_ms": 10, "wcet_ms": 1}])
+    # no periodic task at the requested rate
+    assert "MAIN_FUNCTION_NO_TASK" in codes(
+        {"adc": {"main_function_ms": 50}},
+        [{"name": "a", "period_ms": 10, "wcet_ms": 1}])
+    # the happy path is clean
+    assert "MAIN_FUNCTION_UNSUPPORTED" not in codes(
+        {"adc": {"main_function_ms": 10}},
+        [{"name": "a", "period_ms": 10, "wcet_ms": 1}])
 
 
 def _run_standalone():

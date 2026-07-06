@@ -6,7 +6,7 @@ peripheral/pin/driver tables. Adding a target is a new YAML file here - System
 and the emitters read the selected profile, so no Python changes are needed for
 a same-family part.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -65,6 +65,8 @@ class MCUProfile:
     conflicts: list           # [(a, b, reason), ...]
     driver_init: dict         # peripheral -> Init() call
     driver_header: dict       # peripheral -> header
+    main_functions: dict = field(  # peripheral -> cyclic <Mod>_MainFunction sym
+        default_factory=dict)
 
     @classmethod
     def load(cls, name):
@@ -89,6 +91,7 @@ class MCUProfile:
             conflicts=[tuple(c) for c in (d.get("conflicts") or [])],
             driver_init=dict(d.get("driver_init", {})),
             driver_header=dict(d.get("driver_header", {})),
+            main_functions=dict(d.get("main_functions", {})),
         )
 
 

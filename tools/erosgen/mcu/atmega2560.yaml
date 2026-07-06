@@ -91,6 +91,12 @@ driver_init:
   timer0_pwm: "T0Pwm_Init();"
   icp:        "Icp_Init();"
 
+# Peripherals exposing a cyclic <Mod>_MainFunction (see atmega328p.yaml).
+main_functions:
+  adc:        Adc_MainFunction
+  i2c:        I2c_MainFunction
+  icp:        Icp_MainFunction
+
 driver_header:
   uart:       uart.h
   pwm:        pwm.h

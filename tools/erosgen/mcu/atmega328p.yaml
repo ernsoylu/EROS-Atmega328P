@@ -101,6 +101,14 @@ driver_init:
   timer0_pwm: "T0Pwm_Init();"
   icp:        "Icp_Init();"
 
+# Peripherals exposing a cyclic <Mod>_MainFunction (AUTOSAR): when app.yaml sets
+# `peripherals.<p>.main_function_ms: N`, erosgen calls this symbol every N ms
+# from the matching-rate ASW task (a periodic task at N ms must exist).
+main_functions:
+  adc:        Adc_MainFunction
+  i2c:        I2c_MainFunction
+  icp:        Icp_MainFunction
+
 # Driver header per peripheral (included by os_gen.h for enabled drivers).
 driver_header:
   uart:       uart.h

@@ -108,14 +108,18 @@
         "reference": {"enum": ["avcc", "internal", "aref"],
           "x-eros-code": "ADC_REF"},
         "prescaler": {"enum": [2, 4, 8, 16, 32, 64, 128],
-          "x-eros-code": "ADC_PRESCALER"}
+          "x-eros-code": "ADC_PRESCALER"},
+        "main_function_ms": {"type": "integer", "minimum": 1,
+          "x-eros-code": "MAIN_FUNCTION_MS"}
       }
     },
     "i2c": {
       "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {
-        "speed_hz": {"type": "integer"}
+        "speed_hz": {"type": "integer"},
+        "main_function_ms": {"type": "integer", "minimum": 1,
+          "x-eros-code": "MAIN_FUNCTION_MS"}
       }
     },
     "timer0_pwm": {

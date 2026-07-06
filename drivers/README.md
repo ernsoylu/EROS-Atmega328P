@@ -45,8 +45,16 @@ Gpt(timer0)/Eep(eeprom)/Dio+Icu(extint)/Acomp). The other AUTOSAR layers are:
 Driver** = `reference-demo/uart.c` (USART0 console). The generator threads the
 `mcal/` subdir through the MCU profile file-map and the Makefile emitter (VPATH
 + `-I` per layer dir; source basenames stay flat), so a bound driver resolves to
-`drivers/mcal/<mod>.c` automatically. `<Mod>_MainFunction_<rate>ms` task wiring
-follows in a later increment.
+`drivers/mcal/<mod>.c` automatically.
+
+**Cyclic `<Mod>_MainFunction` scheduling.** A driver that exposes a cyclic
+`<Mod>_MainFunction` (declared in the MCU profile's `main_functions` map — `adc`
+ships `Adc_MainFunction`, a non-blocking channel-0 sampler) is scheduled by
+setting `peripherals.<p>.main_function_ms: N` in `app.yaml`: erosgen calls it
+every N ms from the matching-rate ASW task's **regenerated scaffold** (so it
+runs before your USER CODE and stays wired across regeneration). A periodic task
+at N ms must exist (`MAIN_FUNCTION_NO_TASK` otherwise); a driver without a
+MainFunction is rejected (`MAIN_FUNCTION_UNSUPPORTED`).
 
 | Driver | Peripheral | Nano pins | ISRs | WCET notes |
 |---|---|---|---|---|

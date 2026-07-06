@@ -220,9 +220,14 @@ with it and are migrated separately, not by a blind repo-wide rename).
       Makefile goldens changed (`../drivers` → `../drivers/mcal`); reference-demo
       image byte-identical (3630/4/291). drivers gate + all simavr firmwares +
       RTE fixtures build; 63 tests; regen is a git-diff fixed point.
-- [ ] `<Mod>_MainFunction_<rate>ms` scheduling: generator wires a driver's cyclic
-      MainFunction to the matching OS task (new codegen capability; no driver has
-      a MainFunction yet).
+- [x] **`<Mod>_MainFunction` scheduling** (increment 6): a driver declares a
+      cyclic MainFunction in the profile `main_functions` map (`adc` ships
+      `Adc_MainFunction`, a non-blocking sampler); `peripherals.<p>.
+      main_function_ms: N` wires it into the matching-rate ASW task's regenerated
+      scaffold (runs before USER CODE, survives regen via the Phase 5 merge).
+      Schema field + `ALLOWED_KEYS`; validation `MAIN_FUNCTION_UNSUPPORTED`/
+      `MAIN_FUNCTION_NO_TASK`. Verified: 65 tests, generated app builds and links
+      `Adc_MainFunction`. No drift (feature is opt-in; existing configs unchanged).
 - **Risk:** medium — renames break goldens; needs a coordinated regen. Doing it
       per-module (not all at once) contains the blast radius; ADC increment proved
       the pattern with reference-demo untouched.
