@@ -155,6 +155,12 @@ class System:
         # Model task bodies live in the generated Rte.c (Task_<model>), so they
         # get no asw_<rate>ms.c skeleton and aren't listed as one in the Makefile.
         self.model_task_names = {m["name"].upper() for m in self.models}
+        # A model's extra_runnables each become their own OS task (body in Rte.c),
+        # so they are RTE-owned too (no asw_<rate>ms.c skeleton).
+        for m in self.models:
+            for er in (m.get("extra_runnables") or []):
+                if isinstance(er, dict) and er.get("runnable"):
+                    self.model_task_names.add(str(er["runnable"]).upper())
         # A declared task with a ports:/calibrations: interface is a hand-authored
         # ASW SWC: like a model its body is Task_<name> in the RTE (not an
         # asw_<rate>ms.c skeleton), and erosgen emits its <name>{,_Intfc,_Param}
@@ -179,6 +185,18 @@ class System:
                 "entry": f"Task_{m['name']}",
                 "order": m.get("order"),
             })
+            # Each extra runnable is its own periodic task at its rate (the base
+            # runnable does the port I/O; extras are compute-only - see rte.py).
+            for er in (m.get("extra_runnables") or []):
+                r = er.get("runnable") if isinstance(er, dict) else None
+                if r and er.get("rate_ms") is not None:
+                    task_specs.append({
+                        "name": r,
+                        "period_ms": er["rate_ms"],
+                        "wcet_ms": er.get("wcet_ms", 1),
+                        "entry": f"Task_{r}",
+                        "order": m.get("order"),
+                    })
         # If the app will own cyclic alarms (any periodic/model task) but
         # declares no autostart task, synthesize a minimal init task to arm
         # them. Alarms are armed by OS_StartAlarms(), which only runs from an
@@ -437,6 +455,16 @@ class System:
                 sink.error("MODEL_NO_RATE",
                            f"model '{name}': needs 'rate_ms'", f"model '{name}'")
                 continue
+            for j, er in enumerate(m.get("extra_runnables") or []):
+                erw = f"model '{name}'.extra_runnables[{j}]"
+                if not check_keys(er, "runnable_ref", erw, sink):
+                    continue
+                if not er.get("runnable"):
+                    sink.error("MODEL_EXTRA_NO_RUNNABLE",
+                               f"{erw}: needs a 'runnable'", erw)
+                if er.get("rate_ms") is None:
+                    sink.error("MODEL_EXTRA_NO_RATE",
+                               f"{erw}: needs 'rate_ms'", erw)
             out.append(m)
         # Each model becomes one synthesized OS task, so the number of models is
         # bounded by the 8-task ready-mask limit checked below - no separate cap.

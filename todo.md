@@ -251,8 +251,18 @@ with it and are migrated separately, not by a blind repo-wide rename).
       schema field. The minimal AUTOSAR mode primitive — OnEntry/OnExit runnables
       + transition tables are deliberately out of scope for this non-preemptive
       kernel (tasks chain via ChainTask; a shared mode variable is enough).
-- [ ] Explicit runnable-to-task mapping so one SWC's multiple runnables can map
-      to different rates (today one task = one rate).
+- [x] **Explicit runnable-to-task mapping** (increment 4): a model can declare
+      `extra_runnables: [{runnable, rate_ms}]` - each becomes its own OS task at
+      its rate (`Task_<runnable>` in Rte.c, `TASK_/ALARM_` in config.*), so one
+      SWC's runnables map to different rates. The primary `runnable` does the
+      SWC's port I/O; extra runnables are compute-only (the Simulink base-step /
+      sub-rate-step pattern). Schema `extra_runnables` + validation; verified a
+      multi-runnable model builds -Werror. (Per-runnable port *subsets* would be
+      a further refinement.)
+
+**Phase 8 complete** - RTE binds more drivers (timer0_pwm), per-SWC contract
+headers, cross-rate transitions, mode management, and multi-runnable mapping all
+shipped.
 - [x] **RTE driver coverage — timer0_pwm** (increment 1): output ports can now
       bind to Timer0 8-bit PWM (`driver: timer0_pwm, channel: 0|1`, duty 0..255,
       opt-in scaling) — `bind.py` DriverSpec + `emit/rte.py` adapter

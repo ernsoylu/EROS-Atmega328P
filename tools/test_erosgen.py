@@ -1123,7 +1123,8 @@ def test_allowed_keys_derived_from_schema_matches_contract():
         "i2c": {"speed_hz", "main_function_ms"},
         "timer0_pwm": {"freq_hz"},
         "model": {"name", "codegen_dir", "init", "runnable", "rate_ms",
-                  "wcet_ms", "ports", "order"},
+                  "wcet_ms", "ports", "order", "extra_runnables"},
+        "runnable_ref": {"runnable", "rate_ms", "wcet_ms"},
         "ports": {"in", "out"},
         "port": {"signal", "driver", "channel", "port", "bit", "slope",
                  "offset", "type", "description", "source"},
@@ -1307,6 +1308,39 @@ def test_mode_management_emit_and_validate():
                                      {"name": "M", "states": ["B"]}])
     assert not (codes([{"name": "M", "states": ["A", "B"], "initial": "B"}])
                 & {"MODE_NO_STATES", "MODE_BAD_INITIAL", "MODE_DUP_NAME"})
+
+
+def test_extra_runnables_map_to_tasks():
+    """A model's extra_runnables become their own OS tasks at their own rate: the
+    RTE emits a compute-only Task_<runnable> beside Task_<model>, and the System
+    schedules each (the base runnable does the port I/O)."""
+    from erosgen.emit import emit_rte_c
+    from erosgen.models import BoundPort, ResolvedModel
+    from erosgen.parse import Signal
+    out = BoundPort(Signal("OUT_Led_B", "boolean_T", "out"), "out", "dio",
+                    {"port": "B", "bit": 5}, "Led_B")
+    rm = ResolvedModel("swc", "swc_initialize", "swc_Fast", 10, [], [out], None,
+                       [("swc_Slow", 100)])
+    c = emit_rte_c(rm, "app.yaml", integrated=True)
+    assert "void Task_swc(void)" in c and "Rte_Run_swc();" in c     # base: I/O
+    assert "void Task_swc_Slow(void)" in c                          # extra task
+    assert "swc_Slow();  /* extra runnable (compute-only) */" in c
+    # System-level: the extra runnable is a real scheduled, RTE-owned task
+    s = _system(BASE + """
+models:
+  - name: swc
+    codegen_dir: ../codegen/swc_ert_rtw
+    rate_ms: 10
+    extra_runnables:
+      - { runnable: swc_Slow, rate_ms: 100 }
+tasks: [{ name: init, autostart: true, wcet_ms: 1 }]
+resources: [{ name: r, users: [init] }]
+""")
+    names = {t.name for t in s.tasks}
+    assert "SWC" in names and "SWC_SLOW" in names
+    assert "SWC_SLOW" in s.model_task_names           # no asw_<rate>ms.c skeleton
+    slow = next(t for t in s.tasks if t.name == "SWC_SLOW")
+    assert slow.period_ms == 100 and slow.entry == "Task_swc_Slow"
 
 
 def _run_standalone():

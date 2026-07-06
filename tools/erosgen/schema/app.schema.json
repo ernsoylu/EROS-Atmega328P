@@ -202,7 +202,19 @@
         "rate_ms": {"type": "integer"},
         "wcet_ms": {"type": "number"},
         "ports": {"$ref": "#/$defs/ports"},
-        "order": {"type": "integer"}
+        "order": {"type": "integer"},
+        "extra_runnables": {"type": "array",
+          "items": {"$ref": "#/$defs/runnable_ref"}}
+      }
+    },
+    "runnable_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runnable", "rate_ms"],
+      "properties": {
+        "runnable": {"type": "string"},
+        "rate_ms": {"type": "integer"},
+        "wcet_ms": {"type": "number"}
       }
     },
     "ports": {
