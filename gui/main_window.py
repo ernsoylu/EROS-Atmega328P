@@ -99,6 +99,8 @@ class MainWindow(QMainWindow):
         editm.addAction("Add &Task…").triggered.connect(self.add_task_dialog)
         editm.addAction("Add &Codegen Task…").triggered.connect(
             self.add_model_dialog)
+        editm.addAction("Add &Resource…").triggered.connect(
+            self.add_resource_dialog)
         editm.addSeparator()
         editm.addAction("&Remove Selected").triggered.connect(
             self.remove_selected)
@@ -134,7 +136,8 @@ class MainWindow(QMainWindow):
         self.tree.blockSignals(True)
         self.tree.clear()
         p = self.project
-        sysitem = QTreeWidgetItem(self.tree, [f"System: {p.name}", p.mcu])
+        sysitem = QTreeWidgetItem(
+            self.tree, [f"System: {p.name}", p.board_label(p.mcu)])
         sysitem.setData(0, Qt.UserRole, ("system",))
 
         # Tasks (plain + hand ASW + codegen) grouped by rate; within a rate,
@@ -145,6 +148,16 @@ class MainWindow(QMainWindow):
             grp.setData(0, Qt.UserRole, ("section",))
             for r in rows:
                 self._task_row_item(grp, r)
+
+        # Resources (OSEK shared sections) - the kernel needs at least one.
+        resources = p.resources()
+        rroot = QTreeWidgetItem(self.tree, ["Resources", str(len(resources))])
+        rroot.setData(0, Qt.UserRole, ("section",))
+        for r in resources:
+            users = ", ".join(r["users"]) if r["users"] else "(no users)"
+            ri = QTreeWidgetItem(rroot, [r["name"], users])
+            ri.setData(0, Qt.UserRole, ("resource", r["name"]))
+
         self.tree.expandAll()
         self.tree.blockSignals(False)
         self._reselect()
@@ -215,6 +228,8 @@ class MainWindow(QMainWindow):
             name = self._sel[1]
             page = (self._page_task(name) if self.project.is_asw(name)
                     else self._page_model(name))
+        elif kind == "resource":
+            page = self._page_resource(self._sel[1])
         else:
             page = QLabel("Select a node on the left.")
         self.inspector.setWidget(page)
@@ -246,12 +261,15 @@ class MainWindow(QMainWindow):
         self.mcu_combo.currentTextChanged.connect(self._on_mcu_changed)
         form.addRow("MCU", self.mcu_combo)
 
+        # Board picker shows friendly names (Arduino Nano/Uno/Mega), not the ECU
+        # stem; the profile stem it targets rides along as item data.
         self.board_combo = QComboBox()
-        self.board_combo.addItems(targets.get(chip, [p.mcu]))
-        k = self.board_combo.findText(p.mcu)
+        for stem, label in p.boards_for_chip(chip):
+            self.board_combo.addItem(label, stem)
+        k = self.board_combo.findData(p.mcu)
         if k >= 0:
             self.board_combo.setCurrentIndex(k)
-        self.board_combo.currentTextChanged.connect(self._on_board_changed)
+        self.board_combo.currentIndexChanged.connect(self._on_board_changed)
         form.addRow("Board", self.board_combo)
         lay.addWidget(cfg)
 
@@ -490,6 +508,38 @@ class MainWindow(QMainWindow):
         lay.addWidget(apply)
         return w
 
+    def _page_resource(self, rname):
+        """A resource (OSEK shared section): pick which tasks use it. The kernel
+        needs >= 1 resource, each with >= 1 user (its priority ceiling is the
+        highest-priority user)."""
+        p = self.project
+        row = next((r for r in p.resources() if r["name"] == rname), None)
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        if row is None:
+            lay.addWidget(QLabel(f"Resource '{rname}' not found."))
+            return w
+        gb = QGroupBox(f"Resource: {rname}")
+        gl = QVBoxLayout(gb)
+        gl.addWidget(QLabel("Used by (tasks that share this section — the "
+                            "priority ceiling is their highest priority):"))
+        boxes = []
+        for name in p.runnable_names():
+            cb = QCheckBox(name)
+            cb.setChecked(name in row["users"])
+            gl.addWidget(cb)
+            boxes.append((name, cb))
+        if not boxes:
+            gl.addWidget(QLabel("(no tasks yet — add a task first)"))
+        lay.addWidget(gb)
+
+        self._resource_page = {"name": rname, "boxes": boxes}
+        apply = QPushButton("Apply")
+        apply.clicked.connect(lambda: self._apply_resource())
+        lay.addWidget(apply)
+        lay.addStretch(1)
+        return w
+
     def _fill_params_cell(self, table, row, driver, params, state):
         """Put the right param picker in the Params cell for `driver`: adc -> a
         channel dropdown, dio -> a pin dropdown, pwm/unbound -> nothing. Sets
@@ -547,7 +597,8 @@ class MainWindow(QMainWindow):
         self.project.set_mcu(board)
         self._defer_refresh()
 
-    def _on_board_changed(self, board):
+    def _on_board_changed(self, _idx=None):
+        board = self.board_combo.currentData()   # the profile stem, not the label
         if board and board != self.project.mcu:
             self.project.set_mcu(board)
             self._defer_refresh()
@@ -643,6 +694,15 @@ class MainWindow(QMainWindow):
             else:
                 self.project.bind_port(mname, st["signal"], drv, **st["get"]())
         self._log(f"applied bindings for {mname}")
+        self._defer_refresh()
+
+    def _apply_resource(self):
+        page = getattr(self, "_resource_page", None)
+        if not page:
+            return
+        users = [name for name, cb in page["boxes"] if cb.isChecked()]
+        self.project.set_resource_users(page["name"], users)
+        self._log(f"resource {page['name']} used by {users or '(none)'}")
         self._defer_refresh()
 
     # ---- bottom: diagnostics + console ----------------------------------
@@ -778,6 +838,21 @@ class MainWindow(QMainWindow):
                   "ports on the right")
         self.refresh()
 
+    def add_resource_dialog(self):
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Add Resource", "Resource name:",
+                                        text="app")
+        if not ok or not name.strip():
+            return
+        # default to the first task so the resource is valid immediately
+        # (a resource needs >= 1 user); adjust on its page.
+        tasks = self.project.runnable_names()
+        self.project.add_resource(name.strip(), users=tasks[:1])
+        self._sel = ("resource", name.strip())
+        self._log(f"added resource {name.strip()} — pick its user tasks on the "
+                  "right")
+        self.refresh()
+
     def remove_selected(self):
         kind, name = self._sel[0], (self._sel[1] if len(self._sel) > 1 else None)
         if kind == "signal":                    # route by what owns the port
@@ -786,9 +861,11 @@ class MainWindow(QMainWindow):
             self.project.remove_task(name)
         elif kind == "model":
             self.project.remove_model(name)
+        elif kind == "resource":
+            self.project.remove_resource(name)
         else:
-            QMessageBox.information(self, "Remove",
-                                    "Select a task or codegen task to remove.")
+            QMessageBox.information(
+                self, "Remove", "Select a task, codegen task or resource.")
             return
         self._sel = ("system",)
         self.refresh()

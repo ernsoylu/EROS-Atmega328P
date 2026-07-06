@@ -100,6 +100,24 @@ def test_projectmodel_update_task_and_facts():
     assert p.system_facts() == {}        # unknown MCU -> empty, not a raise
 
 
+def test_projectmodel_board_labels_and_resources():
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    # friendly board names (data-driven from the profile `board:` field)
+    assert p.board_label("atmega328p") == "Arduino Nano"
+    assert p.board_label("arduino_uno") == "Arduino Uno"
+    assert p.board_label("atmega2560") == "Arduino Mega"
+    assert dict(p.boards_for_chip("atmega328p")) == {
+        "atmega328p": "Arduino Nano", "arduino_uno": "Arduino Uno"}
+    # resources: the skeleton has one; removing it -> NO_RESOURCES; re-adding clears
+    assert p.resources()[0]["name"] == "app"
+    p.remove_resource("app")
+    assert "NO_RESOURCES" in {d.code for d in p.diagnostics()}
+    p.add_resource("shared", users=["main"])
+    assert p.resources() == [{"name": "shared", "users": ["main"]}]
+    assert "NO_RESOURCES" not in {d.code for d in p.diagnostics()}
+
+
 def test_projectmodel_interfaces_and_unbind():
     p = ProjectModel()
     p.new("d", "atmega328p")
@@ -153,8 +171,8 @@ def test_mainwindow_new_project():
     w = MainWindow(ProjectModel())    # start empty (no project)
     w.project.new("demo", "atmega328p")
     w.refresh()
-    # System + a "100 ms" group (main) + an "aperiodic" group (init)
-    assert w.tree.topLevelItemCount() == 3
+    # System + "100 ms" (main) + "aperiodic" (init) + Resources
+    assert w.tree.topLevelItemCount() == 4
     assert w.diag.rowCount() == 0            # the skeleton is valid -> no problems
     w.close()
 
@@ -313,19 +331,49 @@ def test_mainwindow_mcu_change_on_empty_launch():
 
 
 def test_mainwindow_board_selector():
-    # MCU picks the chip; Board picks a concrete profile on it. arduino_uno and
-    # the bare atmega328p share one chip but target different board profiles.
+    # MCU picks the chip; Board picks a concrete profile on it, shown by its
+    # friendly name (Arduino Uno/Nano) with the profile stem as item data.
     from gui.main_window import MainWindow
     _app()
     p = ProjectModel()
     p.new("t", "arduino_uno")
     w = MainWindow(p)                       # System page built the two combos
-    assert w.mcu_combo.currentText() == "atmega328p"        # chip
-    assert w.board_combo.currentText() == "arduino_uno"     # board
-    boards = {w.board_combo.itemText(i) for i in range(w.board_combo.count())}
-    assert boards == {"atmega328p", "arduino_uno"}
-    w._on_board_changed("atmega328p")      # switch board within the same chip
-    assert p.mcu == "atmega328p"
+    assert w.mcu_combo.currentText() == "atmega328p"        # chip (ECU)
+    assert w.board_combo.currentText() == "Arduino Uno"     # friendly board name
+    labels = {w.board_combo.itemText(i) for i in range(w.board_combo.count())}
+    stems = {w.board_combo.itemData(i) for i in range(w.board_combo.count())}
+    assert labels == {"Arduino Nano", "Arduino Uno"}        # not the ECU names
+    assert stems == {"atmega328p", "arduino_uno"}
+    # switch board within the same chip via the dropdown (data drives the target)
+    w.board_combo.setCurrentIndex(w.board_combo.findData("atmega328p"))
+    assert p.mcu == "atmega328p"            # bare 328p = Arduino Nano
+    w.close()
+
+
+def test_mainwindow_resource_page_fixes_no_resources():
+    # The Resources section + page let you clear NO_RESOURCES in-app: add a
+    # resource, tick a task on its page, Apply.
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QCheckBox
+    _app()
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    p.remove_resource("app")                     # -> NO_RESOURCES
+    w = MainWindow(p)
+    assert "NO_RESOURCES" in {w.diag.item(r, 1).text()
+                              for r in range(w.diag.rowCount())}
+    # a Resources root exists in the tree
+    assert _find_by_kind(w, "resource") is None  # none yet
+    p.add_resource("rte", users=[])              # invalid until a user is picked
+    w._sel = ("resource", "rte")
+    w._show_inspector()
+    boxes = w.inspector.widget().findChildren(QCheckBox)
+    assert boxes                                  # one checkbox per task
+    boxes[0].setChecked(True)
+    w._apply_resource()
+    assert p.resources()[0]["users"]              # a user got assigned
+    codes = {d.code for d in p.diagnostics()}
+    assert "NO_RESOURCES" not in codes and "RES_NO_USERS" not in codes
     w.close()
 
 

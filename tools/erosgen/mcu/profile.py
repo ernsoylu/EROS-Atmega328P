@@ -50,6 +50,7 @@ def _resolve(name, seen):
 @dataclass(frozen=True)
 class MCUProfile:
     name: str
+    board: str                # friendly board name, e.g. "Arduino Uno"
     ports: str                # valid AVR port letters, e.g. "BCD"
     aliases: dict             # board silk -> AVR pin, e.g. {"D13": "PB5"}
     mcu_gcc: str              # -mmcu value, e.g. "atmega328p"
@@ -71,6 +72,7 @@ class MCUProfile:
         avr = tc.get("avrdude", {}) or {}
         return cls(
             name=d.get("name", name),
+            board=str(d.get("board", d.get("name", name))),
             ports=str(d.get("ports", "")),
             aliases=dict(d.get("aliases", {})),
             mcu_gcc=tc.get("mcu", d.get("name", name)),

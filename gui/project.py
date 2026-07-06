@@ -600,6 +600,39 @@ class ProjectModel:
                 e["order"] = n - 1 - i          # top (i=0) => highest order
         return True
 
+    # ---- resources (OSEK shared sections; the kernel needs >= 1) ---------
+    def resources(self):
+        """[{name, users}] - every declared resource. The kernel config table
+        must hold at least one (NO_RESOURCES otherwise) and each needs a
+        non-empty users list (RES_NO_USERS otherwise)."""
+        out = []
+        for r in self.plain.get("resources", []) or []:
+            if isinstance(r, dict) and r.get("name"):
+                out.append({"name": r["name"],
+                            "users": list(r.get("users", []) or [])})
+        return out
+
+    def runnable_names(self):
+        """Every task/codegen-task name a resource can list as a user."""
+        return [r["name"] for r in self.schedule()]
+
+    def add_resource(self, name, users=None):
+        self.doc.setdefault("resources", []).append(
+            {"name": name, "users": list(users or [])})
+
+    def remove_resource(self, name):
+        res = self.doc.get("resources")
+        if isinstance(res, list):
+            self.doc["resources"] = [r for r in res if not (
+                isinstance(r, dict) and r.get("name") == name)]
+
+    def set_resource_users(self, name, users):
+        for r in self.doc.get("resources", []) or []:
+            if isinstance(r, dict) and r.get("name") == name:
+                r["users"] = list(users)
+                return True
+        return False
+
     # ---- target: chip (MCU) + board -------------------------------------
     def available_targets(self):
         """Every MCU profile grouped by chip: {chip: [profile, ...]}. A profile
@@ -633,6 +666,21 @@ class ProjectModel:
             if self.mcu in names:
                 return chip
         return self.mcu
+
+    def board_label(self, stem):
+        """The friendly board name for a profile stem (e.g. atmega328p ->
+        'Arduino Nano', arduino_uno -> 'Arduino Uno'); falls back to the stem."""
+        try:
+            from erosgen.mcu.profile import load_profile
+            return load_profile(stem).board
+        except Exception:
+            return stem
+
+    def boards_for_chip(self, chip):
+        """[(stem, friendly_label)] for every board profile on a chip - what the
+        Board picker lists (labels, not ECU names)."""
+        return [(stem, self.board_label(stem))
+                for stem in self.available_targets().get(chip, [chip])]
 
     # ---- driver param value sets (MCU-limited, for dropdowns) -----------
     def adc_channels(self):

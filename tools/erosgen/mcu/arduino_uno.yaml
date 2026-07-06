@@ -9,6 +9,7 @@
 # profile.py merges the base + these overrides.
 # =====================================================================
 name: arduino_uno
+board: Arduino Uno           # friendly board name shown in the GUI board picker
 extends: atmega328p
 
 toolchain:
