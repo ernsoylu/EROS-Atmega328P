@@ -35,6 +35,8 @@ from .emit import (emit_asw_skeleton, emit_config_c, emit_config_h,
                    emit_rte_c, emit_rte_cfg_h, emit_rte_h)
 from .emit.asw import ASW_FILES
 from .errors import ConfigError
+from .merge import has_markers
+from .merge import merge as merge_user_code
 from .model import System
 from .models import resolve_connections, resolve_models
 from .report import report
@@ -45,13 +47,34 @@ except ImportError:  # pragma: no cover
     sys.exit("erosgen: PyYAML required (pip install pyyaml)")
 
 
-def write(path, content, check_only, overwrite=True):
-    if not overwrite and path.exists():
-        return "kept"
+def write(path, content, check_only, overwrite=True, sink=None):
+    """Reconcile `content` against the file on disk and report the action.
+
+    overwrite=True  -> a derived artifact: rewritten, but skipped ("unchanged")
+                       when byte-identical so `make config` doesn't churn mtimes.
+    overwrite=False -> a once-file skeleton: if it already carries USER CODE
+                       markers, the scaffold is refreshed and the user regions
+                       are re-injected ("merged", see merge.py); a legacy
+                       marker-less file is kept untouched ("kept").
+    """
+    existing = path.read_text() if path.exists() else None
+    status = "wrote"
+    if not overwrite and existing is not None:
+        if has_markers(existing):
+            content = merge_user_code(content, existing, sink, where=path.name)
+            status = "merged"
+        else:
+            return "kept"
+    if existing == content:
+        return "unchanged"
     if check_only:
         return "would write"
-    path.write_text(content)
-    return "wrote"
+    # `path` is a generated artifact under the user's own app_dir (main()
+    # resolves it from the app.yaml the developer passed). erosgen is a local
+    # codegen CLI with no trust boundary between the "attacker" and the file
+    # owner, so S2083 (path injection from user-controlled data) does not apply.
+    path.write_text(content)  # NOSONAR
+    return status
 
 
 def _parse_args(argv):
@@ -145,9 +168,12 @@ def main(argv):
         return 1
 
     report(s)
+    msink = Diagnostics(strict=False)   # merge/orphan notes: never fatal
     for path, content, overwrite in outputs:
-        action = write(path, content, check_only, overwrite)
+        action = write(path, content, check_only, overwrite, msink)
         print(f"  {action}: {path.relative_to(app_dir)}")
+    for d in msink.items:
+        print(f"  {d.severity.upper()}: [{d.code}] {d.message}")
     missing = [f for f in s.sources if not (app_dir / f).exists()]
     for f in missing:
         print(f"  WARNING: listed source {f} does not exist (yet)")

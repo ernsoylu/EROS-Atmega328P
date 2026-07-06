@@ -116,23 +116,31 @@ silently strands the user-owned skeletons while `config.*`/`os_gen.h` move on.
 The `os_gen.h` "regenerate only if `main.c` still references it" hack is a
 workaround for exactly this.
 
-- [ ] Emit paired `/* USER CODE BEGIN <id> */` … `/* USER CODE END <id> */`
+- [x] Emit paired `/* USER CODE BEGIN <id> */` … `/* USER CODE END <id> */`
       markers in all user-facing files (`main.c`, `asw_*.c`, hand-ASW bodies),
-      with **stable IDs derived from the YAML element** (e.g. `TASK_BUTTON_BODY`)
-      so renames carry user code by ID, not line number.
-- [ ] `merge.py`: three-way merge — parse the current on-disk file for
-      `BEGIN/END` block contents, emit the fresh skeleton with the same IDs,
-      re-inject captured user code into matching regions.
-- [ ] Diagnostics: `ORPHAN_USER_BLOCK` (warning) when a marker no longer maps to
-      any YAML element, so the user can relocate the code instead of losing it.
-- [ ] Golden tests for re-injection (edit-in-a-region → regen → edit preserved).
-- [ ] **Idempotent generation (content-hash skip)** — `cli.write()` currently
-      does an unconditional `path.write_text` even when the rendered content is
-      byte-identical, so every `make config` rewrites `config.*`/`os_gen.h`/
-      `Rte.*` and dirties timestamps (needless rebuilds). Skip the write when the
-      computed content matches the on-disk bytes; report `unchanged` alongside
-      `wrote`/`kept`. Small, lives in the same `write()` change as the merge.
-- **Risk:** low, additive; touches `cli.write()` + the skeleton emitters only.
+      with **stable IDs derived from the YAML element** (`TASK_<NAME>_BODY`/
+      `_STATE`, `STARTUP_HOOK`/`ERROR_HOOK`/`SHUTDOWN_HOOK`, `RUNNABLE_<NAME>_
+      INIT`/`_STEP`, `INCLUDES`) so a reorder carries user code by ID, not line.
+- [x] `merge.py`: three-way merge — parse the on-disk file's `BEGIN/END` block
+      contents (`extract_regions`), emit the fresh skeleton with the same IDs,
+      re-inject captured user code into matching regions. Malformed markers →
+      keep the file untouched (`MERGE_PARSE`), never lose data.
+- [x] Diagnostics: `ORPHAN_USER_BLOCK` (warning) when a region no longer maps to
+      any YAML element; the code is preserved verbatim in a compile-safe,
+      idempotent `#if 0` graveyard so the user can relocate it, not lose it.
+- [x] Golden tests for re-injection (edit-in-region → regen → preserved), orphan
+      preservation, malformed-marker fallback, and the idempotent skip; genmain
+      goldens + `model_app`/`model_multi`/`asw_task` `main.c` regenerated.
+- [x] **Idempotent generation (content-hash skip)** — `cli.write()` skips the
+      `write_text` when the computed content matches the on-disk bytes and
+      reports `unchanged` alongside `wrote`/`kept`/`merged`, so `make config` no
+      longer dirties `config.*`/`os_gen.h`/`Rte.*` timestamps needlessly.
+- **Migration:** a legacy marker-less once-file is still `kept` untouched (opt in
+      by deleting + regenerating). Behavior change was code-only; the overwrite
+      table in `tools/README.md` still needs a `merged`/USER CODE note (a
+      follow-up on the docs branch, to avoid a merge conflict here).
+- **Risk:** low, additive; touched `cli.write()`, the skeleton emitters, and new
+      `merge.py` only.
 
 ### Phase 6 — Meta-model / schema-driven validation
 Validation is code-driven: `validate.ALLOWED_KEYS` (a dict) + hand-coded checks

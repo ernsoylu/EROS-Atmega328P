@@ -779,14 +779,18 @@ def test_asw_task_end_to_end_generate():
                   "ctrl_Param.c", "ctrl_Param.h", "Rte.c", "config.c",
                   "Makefile"):
             assert (Path(tmp) / f).exists(), f"missing generated {f}"
-        # regenerating must NOT clobber a hand-edited runnable (overwrite=False)
+        # Regeneration preserves user code by USER CODE region id (Phase 5).
+        # Append a marker-wrapped block (append-only keeps taint analysis happy,
+        # unlike read_text()+concat+write_text). Its id has no home in the fresh
+        # skeleton, so it must survive in the ORPHAN #if 0 block, never clobbered.
         body = Path(tmp) / "ctrl.c"
-        # append the "hand edit" (not read_text()+concat+write_text, which trips
-        # taint analysis reading its own output back as external input)
         with body.open("a") as fh:
-            fh.write("\n/* my algorithm */\n")
+            fh.write("\n/* USER CODE BEGIN MINE */\n/* my algorithm */\n"
+                     "/* USER CODE END MINE */\n")
         erosgen.main(["erosgen", str(app)])
-        assert "/* my algorithm */" in body.read_text()
+        after = body.read_text()
+        assert "/* my algorithm */" in after            # never lost
+        assert "#if 0" in after and "ORPHANED" in after  # preserved as an orphan
 
 
 def test_makefile_unset_drivers_dir_is_clean_error():
@@ -988,6 +992,86 @@ def test_adc_i2c_timer0_validation():
     assert "ADC_PRESCALER" in codes({"adc": {"prescaler": 5}})     # not a pow2
     assert "I2C_SPEED" in codes({"i2c": {"speed_hz": 5}})           # TWBR > 255
     assert "T0PWM_FREQ_ROUND" in codes({"timer0_pwm": {"freq_hz": 5000}})
+
+
+def test_skeletons_carry_user_code_markers():
+    """The once-file skeletons emit paired USER CODE markers with stable,
+    element-derived ids (Phase 5) so regeneration can merge, not freeze."""
+    s = _system_from(GENMAIN / "app.yaml")
+    main_c = erosgen.emit_main_skeleton(s)
+    assert "/* USER CODE BEGIN INCLUDES */" in main_c
+    assert "/* USER CODE BEGIN STARTUP_HOOK */" in main_c
+    assert "/* USER CODE BEGIN TASK_INIT_BODY */" in main_c
+    asw = erosgen.emit_asw_skeleton(s, s.periodic[0])
+    assert "/* USER CODE BEGIN TASK_CTRL_BODY */" in asw
+    assert "/* USER CODE END TASK_CTRL_BODY */" in asw
+
+
+def test_merge_reinjects_user_regions_and_refreshes_scaffold():
+    """merge() carries the bytes inside a region across a scaffold change and
+    drops anything a user left outside a region."""
+    from erosgen.merge import begin, end, merge
+    fresh = f"NEW_SIG\n{begin('B')}\n    /* seed */\n{end('B')}\ntail\n"
+    edited = f"OLD_SIG\n{begin('B')}\n    do_work();\n{end('B')}\nstray\n"
+    out = merge(fresh, edited)
+    assert "NEW_SIG" in out and "OLD_SIG" not in out   # scaffold refreshed
+    assert "do_work();" in out and "/* seed */" not in out
+    assert "stray" not in out                           # out-of-region dropped
+    # an untouched region (seed unchanged) round-trips byte-identically
+    assert merge(fresh, fresh) == fresh
+
+
+def test_merge_orphan_block_is_warned_and_preserved():
+    """A region on disk with no home in the fresh skeleton is reported
+    ORPHAN_USER_BLOCK and kept in a compile-safe, idempotent #if 0 block."""
+    from erosgen.merge import begin, end, merge
+    fresh = f"{begin('LIVE')}\n{end('LIVE')}\n"
+    existing = fresh + f"{begin('GONE')}\n/* keep me */\n{end('GONE')}\n"
+    sink = erosgen.Diagnostics(strict=False)
+    out = merge(fresh, existing, sink, where="x.c")
+    assert "/* keep me */" in out and "#if 0" in out and "#endif" in out
+    assert [d.code for d in sink.items] == ["ORPHAN_USER_BLOCK"]
+    # re-merging the graveyard is a fixed point (no unbounded growth)
+    assert merge(fresh, out, erosgen.Diagnostics(strict=False), where="x.c") == out
+
+
+def test_merge_malformed_markers_keep_file_unchanged():
+    """Unbalanced markers on disk must never lose data: keep the file, warn."""
+    from erosgen.merge import begin, merge
+    fresh = f"{begin('A')}\n/* USER CODE END A */\n"
+    broken = f"{begin('A')}\n oops, no END\n"
+    sink = erosgen.Diagnostics(strict=False)
+    assert merge(fresh, broken, sink, where="x.c") == broken
+    assert [d.code for d in sink.items] == ["MERGE_PARSE"]
+
+
+def test_write_idempotent_skip_merge_and_legacy_kept():
+    """cli.write: byte-identical rewrite is skipped ('unchanged'); a once-file
+    with markers merges; a legacy marker-less once-file is kept."""
+    import tempfile
+
+    from erosgen.cli import write
+    from erosgen.merge import begin, end
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Path(tmp) / "config.h"                    # a derived artifact
+        assert write(cfg, "x\n", check_only=False) == "wrote"
+        assert write(cfg, "x\n", check_only=False) == "unchanged"   # skip
+        assert write(cfg, "y\n", check_only=False) == "wrote"
+
+        sk = Path(tmp) / "main.c"                        # a once-file
+        v1 = f"old scaffold\n{begin('B')}\n{end('B')}\n"
+        assert write(sk, v1, check_only=False, overwrite=False) == "wrote"
+        sk.write_text(f"old scaffold\n{begin('B')}\n    mine();\n{end('B')}\n")
+        v2 = f"new scaffold\n{begin('B')}\n{end('B')}\n"  # regen changed scaffold
+        assert write(sk, v2, check_only=False, overwrite=False) == "merged"
+        merged = sk.read_text()
+        assert "mine();" in merged and "new scaffold" in merged  # both survive
+        assert write(sk, v2, check_only=False, overwrite=False) == "unchanged"
+
+        legacy = Path(tmp) / "legacy.c"                  # pre-markers once-file
+        legacy.write_text("hand written, no markers\n")
+        assert write(legacy, "regen\n", check_only=False, overwrite=False) == "kept"
+        assert legacy.read_text() == "hand written, no markers\n"
 
 
 def test_allowed_keys_derived_from_schema_matches_contract():
