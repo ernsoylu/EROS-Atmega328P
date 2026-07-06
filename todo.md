@@ -124,6 +124,12 @@ workaround for exactly this.
 - [ ] Diagnostics: `ORPHAN_USER_BLOCK` (warning) when a marker no longer maps to
       any YAML element, so the user can relocate the code instead of losing it.
 - [ ] Golden tests for re-injection (edit-in-a-region → regen → edit preserved).
+- [ ] **Idempotent generation (content-hash skip)** — `cli.write()` currently
+      does an unconditional `path.write_text` even when the rendered content is
+      byte-identical, so every `make config` rewrites `config.*`/`os_gen.h`/
+      `Rte.*` and dirties timestamps (needless rebuilds). Skip the write when the
+      computed content matches the on-disk bytes; report `unchanged` alongside
+      `wrote`/`kept`. Small, lives in the same `write()` change as the merge.
 - **Risk:** low, additive; touches `cli.write()` + the skeleton emitters only.
 
 ### Phase 6 — Meta-model / schema-driven validation
@@ -196,6 +202,17 @@ Regex parser is tied to the ExportToFile/Define storage-class contract.
       `c_cpp_properties.json`, and `compile_commands.json` from the per-`.o` rule.
 - [ ] `emit/a2l.py` (ASAP2/A2L from the `Calibration`/`Signal` dataclasses) + a
       minimal XCP-on-UART slave over the existing console, for on-target tuning.
+
+### Phase 13 — Project/workspace + variant management (low priority)
+Today one `app.yaml` = one application; there is no ECU-configuration-set or
+variant posture (the SystemDesk concept that matters the moment there's a product
+line). Low priority for a single-target hobby/education AVR tool, but a real
+SystemDesk-class gap worth recording.
+- [ ] `erosproject.yaml` aggregating multiple `app.yaml`s with shared BSW/MCAL
+      config and variant postures (debug/release, feature flags) as configuration
+      sets; the GUI opens a workspace, not just a single project.
+- **Risk:** medium; only worth doing once BSW layering (Phase 7) gives shared
+      config something to share.
 
 ---
 
