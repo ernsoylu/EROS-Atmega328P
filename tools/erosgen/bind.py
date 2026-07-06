@@ -27,7 +27,7 @@ class DriverSpec:
 # RTE bindings; ranges mirror drivers/ and mcu/atmega328p.yaml.
 DRIVERS = {
     "adc": DriverSpec("adc", ("in",), "uint16_t", 1023, "adc.h",
-                      ("channel",), "ADC_Init();"),
+                      ("channel",), "Adc_Init();"),
     "dio": DriverSpec("dio", ("in", "out"), "uint8_t", 1, "",
                       ("port", "bit"), "", boolean=True),
     # Timer1 PWM on the fixed OC1A pin; duty is permille (0..1000), so uint16 -

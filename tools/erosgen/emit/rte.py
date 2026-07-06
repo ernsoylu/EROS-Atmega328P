@@ -2,7 +2,7 @@
 
 Generated from a ResolvedModel (models.py). Mirrors the hand-written rte/
 template (see rte/README.md) so the output compiles against the same drivers:
-ADC_Read/ADC_Init for adc ports, DDRx/PORTx/PINx for dio ports. Ports with a
+Adc_ReadChannel/Adc_Init for adc ports, DDRx/PORTx/PINx for dio ports. Ports with a
 driver this emitter doesn't handle yet produce a visible #error.
 """
 
@@ -149,13 +149,13 @@ def _adapter(port):
             wide = _wide(port)
             return [f"static {cty} Rte_Read_{stem}(void)",
                     "{",
-                    f"    uint16_t raw = ADC_Read(RTE_CFG_{tag}_ADC_CH);",
+                    f"    uint16_t raw = Adc_ReadChannel(RTE_CFG_{tag}_ADC_CH);",
                     f"    return ({cty})(({wide})raw * RTE_CFG_{tag}_SLOPE"
                     f" + RTE_CFG_{tag}_OFFSET);",
                     "}"]
         return [f"static uint16_t Rte_Read_{stem}(void)",
                 "{",
-                f"    return ADC_Read(RTE_CFG_{tag}_ADC_CH);",
+                f"    return Adc_ReadChannel(RTE_CFG_{tag}_ADC_CH);",
                 "}"]
     if port.driver == "dio" and port.direction == "in":
         return [f"static uint8_t Rte_Read_{stem}(void)",
@@ -237,7 +237,7 @@ def _rte_init(L, rms, multi):
         L.append("    /* BSW init for the bound ports. */")
         for port in rm.inputs + rm.outputs:
             if port.driver == "adc":
-                L.append("    ADC_Init();")
+                L.append("    Adc_Init();")
             elif port.driver == "pwm":
                 L.append("    PWM_Init();")
             elif port.driver == "dio":

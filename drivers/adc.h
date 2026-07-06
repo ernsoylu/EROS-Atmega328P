@@ -25,22 +25,22 @@
  *  Call with interrupts disabled (e.g. from StartupHook()).
  *  Tip: for lower noise/power set DIDR0 bits for pins used purely as
  *  analog inputs (kills their digital input buffer) - app decision. */
-void ADC_Init(void);
+void Adc_Init(void);
 
 /** Blocking single conversion on channel 0..7 (A0..A7), ~104 us.
  *  @return raw 10-bit result 0..1023 (channel is masked to 0..7). */
-uint16_t ADC_Read(uint8_t channel);
+uint16_t Adc_ReadChannel(uint8_t channel);
 
 /** Measure the supply voltage by converting the internal 1.1 V bandgap
  *  against AVcc (no external parts): Vcc[mV] = 1100 * 1024 / raw.
  *  ~350 us (settle + discarded conversion + real conversion).
  *  @return Vcc in millivolts, or 0 if the reading was invalid. */
-uint16_t ADC_ReadVccMillivolts(void);
+uint16_t Adc_ReadVccMillivolts(void);
 
 /** Raw reading of the on-die temperature sensor (channel 8) against
  *  the internal 1.1 V reference. UNCALIBRATED: ~314 mV at +25 C,
  *  ~1.22 mV/K slope, device-to-device offset up to +/-10 C - calibrate
  *  per board and store the offset in EEPROM. ~350 us. */
-uint16_t ADC_ReadTempRaw(void);
+uint16_t Adc_ReadTempRaw(void);
 
 #endif /* ADC_H */

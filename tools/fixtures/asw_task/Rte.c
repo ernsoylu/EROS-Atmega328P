@@ -27,7 +27,7 @@
 
 static uint16_t Rte_Read_KnbVal(void)
 {
-    return ADC_Read(RTE_CFG_KNBVAL_ADC_CH);
+    return Adc_ReadChannel(RTE_CFG_KNBVAL_ADC_CH);
 }
 
 static void Rte_Write_Led(uint8_t on)
@@ -47,7 +47,7 @@ static void Rte_Write_Led(uint8_t on)
 void Rte_Init(void)
 {
     /* BSW init for the bound ports. */
-    ADC_Init();
+    Adc_Init();
     RTE_CFG_LED_DDR  |= (uint8_t)(1u << RTE_CFG_LED_BIT);
     RTE_CFG_LED_PORT &= (uint8_t)~(1u << RTE_CFG_LED_BIT);
 

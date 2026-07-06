@@ -29,7 +29,7 @@
 
 static uint16_t Rte_Read_KnbVal_Z(void)
 {
-    return ADC_Read(RTE_CFG_KNBVAL_Z_ADC_CH);
+    return Adc_ReadChannel(RTE_CFG_KNBVAL_Z_ADC_CH);
 }
 
 static void Rte_Write_Led1_B(uint8_t on)
@@ -46,7 +46,7 @@ static void Rte_Write_Led1_B(uint8_t on)
 
 static uint16_t Rte_Read_Speed_Rpm(void)
 {
-    return ADC_Read(RTE_CFG_SPEED_RPM_ADC_CH);
+    return Adc_ReadChannel(RTE_CFG_SPEED_RPM_ADC_CH);
 }
 
 static void Rte_Write_Fan_B(uint8_t on)
@@ -67,7 +67,7 @@ void Rte_Init(void)
 {
     /* appKnbSwt */
     /* BSW init for the bound ports. */
-    ADC_Init();
+    Adc_Init();
     RTE_CFG_LED1_B_DDR  |= (uint8_t)(1u << RTE_CFG_LED1_B_BIT);
     RTE_CFG_LED1_B_PORT &= (uint8_t)~(1u << RTE_CFG_LED1_B_BIT);
 
@@ -76,7 +76,7 @@ void Rte_Init(void)
 
     /* motor */
     /* BSW init for the bound ports. */
-    ADC_Init();
+    Adc_Init();
     RTE_CFG_FAN_B_DDR  |= (uint8_t)(1u << RTE_CFG_FAN_B_BIT);
     RTE_CFG_FAN_B_PORT &= (uint8_t)~(1u << RTE_CFG_FAN_B_BIT);
 

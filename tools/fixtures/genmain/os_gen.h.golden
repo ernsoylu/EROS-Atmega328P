@@ -23,7 +23,7 @@ static inline void Board_ConfigurePins(void)
     PORTB &= (uint8_t)~(1u << PB5);
     DDRD &= (uint8_t)~(1u << PD2);  /* BUTTON input */
     PORTD |= (uint8_t)(1u << PD2);  /* pull-up */
-    ADC_Init();
+    Adc_Init();
 }
 
 /** Arm every cyclic alarm with ALIGNED releases (all first

@@ -21,12 +21,12 @@ int main(void)
 
     tk_init();
 
-    ADC_Init();
+    Adc_Init();
     TK_ASSERT((ADCSRA & (1u << ADEN)) != 0u, "aden");
 
-    a0 = ADC_Read(0u);   /* 2500 mV */
-    a1 = ADC_Read(1u);   /* 1100 mV */
-    a2 = ADC_Read(2u);   /*    0 mV */
+    a0 = Adc_ReadChannel(0u);   /* 2500 mV */
+    a1 = Adc_ReadChannel(1u);   /* 1100 mV */
+    a2 = Adc_ReadChannel(2u);   /*    0 mV */
 
     /* 10-bit results in range. */
     TK_ASSERT(a0 < 1024u && a1 < 1024u && a2 < 1024u, "range");

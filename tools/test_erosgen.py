@@ -241,7 +241,7 @@ def test_mcu_profile_loads_atmega328p():
     assert p.name == "atmega328p"
     assert p.known_peripherals["uart"] == "uart.c"
     assert p.peripheral_pins["spi"] == ["PB2", "PB3", "PB4", "PB5"]
-    assert p.driver_init["adc"] == "ADC_Init();"
+    assert p.driver_init["adc"] == "Adc_Init();"
     assert p.conflicts == [("icp", "pwm",
                             "both own Timer1 (capture vs ICR1-as-TOP)")]
     # unknown target fails loudly (not a silent empty profile)
@@ -458,7 +458,7 @@ def test_rte_scaling_integer_math():
     assert "5" in cfg and "-3" in cfg
     # the read adapter returns the signal's C type and calibrates via int32_t
     assert "static uint16_t Rte_Read_KnbVal_Z(void)" in c
-    assert "uint16_t raw = ADC_Read(RTE_CFG_KNBVAL_Z_ADC_CH);" in c
+    assert "uint16_t raw = Adc_ReadChannel(RTE_CFG_KNBVAL_Z_ADC_CH);" in c
     assert ("(int32_t)raw * RTE_CFG_KNBVAL_Z_SLOPE + RTE_CFG_KNBVAL_Z_OFFSET"
             in c)
 

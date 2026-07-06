@@ -25,7 +25,7 @@
 #define ADC_PRESCALER ((1u << ADPS2) | (1u << ADPS1) | (1u << ADPS0)) /* /128 */
 #endif
 
-void ADC_Init(void)
+void Adc_Init(void)
 {
     ADMUX  = ADC_REF; /* channel 0 */
     ADCSRA = (uint8_t)((1u << ADEN) | ADC_PRESCALER);
@@ -43,7 +43,7 @@ static uint16_t ADC_Convert(void)
     return ADC;
 }
 
-uint16_t ADC_Read(uint8_t channel)
+uint16_t Adc_ReadChannel(uint8_t channel)
 {
     ADMUX = (uint8_t)(ADC_REF | (channel & 0x07u));
     return ADC_Convert();
@@ -52,7 +52,7 @@ uint16_t ADC_Read(uint8_t channel)
 /** Internal-channel read: switch MUX/reference, let the reference
  *  settle, discard the first (inaccurate) conversion, convert, then
  *  restore AVcc/channel 0. */
-static uint16_t ADC_ReadInternal(uint8_t admux)
+static uint16_t Adc_ReadChannelInternal(uint8_t admux)
 {
     uint16_t raw;
 
@@ -64,16 +64,16 @@ static uint16_t ADC_ReadInternal(uint8_t admux)
     return raw;
 }
 
-uint16_t ADC_ReadVccMillivolts(void)
+uint16_t Adc_ReadVccMillivolts(void)
 {
     const uint16_t raw =
-        ADC_ReadInternal((uint8_t)(ADC_REF_AVCC | ADC_MUX_BANDGAP));
+        Adc_ReadChannelInternal((uint8_t)(ADC_REF_AVCC | ADC_MUX_BANDGAP));
 
     /* Vcc = Vbg * 1024 / raw; raw == 0 would mean an open mux. */
     return (raw != 0u) ? (uint16_t)(1126400uL / raw) : 0u;
 }
 
-uint16_t ADC_ReadTempRaw(void)
+uint16_t Adc_ReadTempRaw(void)
 {
-    return ADC_ReadInternal((uint8_t)(ADC_REF_1V1 | ADC_MUX_TEMP));
+    return Adc_ReadChannelInternal((uint8_t)(ADC_REF_1V1 | ADC_MUX_TEMP));
 }

@@ -173,16 +173,34 @@ peripheral means editing `validate.py` + `model.py` + an emitter.
 
 ### Phase 7 — BSW/MCAL layering
 `drivers/` is flat (`adc/eeprom/i2c/spi/timer0_pwm/…`) with no MCAL/Services
-stratification and no standardized module interface.
+stratification and no standardized module interface. **Staged** to keep the
+byte-identical `reference-demo` anchor safe (it ships app-local `pwm.c`/`uart.c`
+with `PWM_*`/`UART_*` names and declares `pwm:`, so those modules are entangled
+with it and are migrated separately, not by a blind repo-wide rename).
 
-- [ ] Restructure toward the AUTOSAR topology: MCAL (Dio/Adc/Pwm/Gpt/Icu/Spi/
-      Port), Services (EcuM-like startup, Dem-like error sink, Com-like IPC over
-      the existing mailbox+pool), ComplexDeviceDriver (uart/watchdog).
-- [ ] Standardized interface per module: `<Mod>_Init` / `<Mod>_MainFunction_<rate>ms`
-      wired to the matching OS task by the generator; update `bind.py` `DriverSpec`
-      strings (`ADC_Read/ADC_Init` → `Adc_ReadGroup/Adc_Init`).
-- **Risk:** medium — renames break goldens; needs a coordinated regen. Do after
-      Phase 5 so user code survives the churn.
+- [x] **MCAL naming — ADC leads** (increment 1): `ADC_Init`/`ADC_Read` →
+      `Adc_Init`/`Adc_ReadChannel` (+ `Adc_ReadVccMillivolts`/`Adc_ReadTempRaw`),
+      threaded through `bind.py` `DriverSpec`, `emit/rte.py`, both MCU profiles,
+      the hand-written `rte/Rte.c` reference, and the `test_adc` simavr firmware;
+      RTE goldens + `genmain/os_gen.h` regenerated. ADC is fully decoupled from
+      `reference-demo` (zero ADC there), so its goldens stayed byte-identical.
+      Verified: 63 engine + 37 GUI tests, ruff/mypy, `avr-gcc` builds
+      reference-demo (budget gates) + fixtures, `avr-nm` confirms `Adc_*` symbols.
+      Note: kept the AUTOSAR *group* API (`Adc_ReadGroup`) out — single-channel
+      blocking `Adc_ReadChannel` matches the 8-bit target; documented.
+- [ ] **Remaining MCAL/CDD modules** (pwm/spi/i2c/gpt/icu/dio/…) → AUTOSAR names,
+      one coherent module at a time; `pwm` needs the `reference-demo` app-local
+      driver untangled first (shared `drivers/pwm.c` is used by no built fixture
+      today — verify before renaming).
+- [ ] Restructure toward the AUTOSAR topology dirs: MCAL, Services (EcuM-like
+      startup, Dem-like error sink, Com-like IPC over the mailbox+pool),
+      ComplexDeviceDriver (uart/watchdog) — file moves + Makefile path churn.
+- [ ] `<Mod>_MainFunction_<rate>ms` scheduling: generator wires a driver's cyclic
+      MainFunction to the matching OS task (new codegen capability; no driver has
+      a MainFunction yet).
+- **Risk:** medium — renames break goldens; needs a coordinated regen. Doing it
+      per-module (not all at once) contains the blast radius; ADC increment proved
+      the pattern with reference-demo untouched.
 
 ### Phase 8 — RTE maturity (residuals; multi-model already done)
 - [ ] Contract phase: emit per-SWC `Rte_<SWC>.h` application headers (compile a
