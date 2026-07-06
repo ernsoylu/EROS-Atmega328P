@@ -24,6 +24,19 @@ def _app():
     return QApplication.instance() or QApplication([])
 
 
+def _find_by_kind(w, kind):
+    """Walk the (now rate-grouped) tree for the first item of a given kind."""
+    stack = [w.tree.topLevelItem(i) for i in range(w.tree.topLevelItemCount())]
+    while stack:
+        it = stack.pop()
+        d = it.data(0, Qt.UserRole)
+        if d and d[0] == kind:
+            return it
+        for i in range(it.childCount()):
+            stack.append(it.child(i))
+    return None
+
+
 def test_projectmodel_reference_demo():
     p = ProjectModel(REF)
     assert p.name == "eros"
@@ -110,9 +123,9 @@ def test_mainwindow_smoke():
     _app()
     p = ProjectModel(REF)
     w = MainWindow(p)
-    # master-detail: two roots now - System and the unified Tasks schedule.
-    assert w.tree.topLevelItemCount() == 2
-    assert w.tree.topLevelItem(0).data(0, Qt.UserRole)[0] == "system"
+    # master-detail: System first, then one node per task rate group.
+    assert w.tree.topLevelItem(0).data(0, Qt.UserRole) == ("system",)
+    assert w.tree.topLevelItemCount() >= 2
     assert w.diag.rowCount() == len(p.diagnostics())
     # System is selected by default -> the right panel built its MCU combo.
     assert w.mcu_combo is not None and w.mcu_combo.count() >= 2
@@ -140,7 +153,8 @@ def test_mainwindow_new_project():
     w = MainWindow(ProjectModel())    # start empty (no project)
     w.project.new("demo", "atmega328p")
     w.refresh()
-    assert w.tree.topLevelItemCount() == 2   # System + Tasks·by priority
+    # System + a "100 ms" group (main) + an "aperiodic" group (init)
+    assert w.tree.topLevelItemCount() == 3
     assert w.diag.rowCount() == 0            # the skeleton is valid -> no problems
     w.close()
 
@@ -168,12 +182,9 @@ def test_mainwindow_shows_model_ports():
     from gui.main_window import MainWindow
     _app()
     w = MainWindow(ProjectModel(MODEL_APP))
-    roots = [w.tree.topLevelItem(i) for i in range(w.tree.topLevelItemCount())]
-    # models are scheduled tasks now, so they live under the unified Tasks root,
-    # marked ◆, and expand to their in/out signals.
-    tasks_root = next(r for r in roots if r.text(0).startswith("Tasks"))
-    model_item = next(tasks_root.child(i) for i in range(tasks_root.childCount())
-                      if tasks_root.child(i).data(0, Qt.UserRole)[0] == "model")
+    # a codegen task lives under its rate group, marked ◆, and expands to ports.
+    model_item = _find_by_kind(w, "model")
+    assert model_item is not None
     assert "appKnbSwt" in model_item.text(0) and "◆" in model_item.text(0)
     assert model_item.childCount() == 2            # IN_KnbVal_Z + OUT_Led1_B
     assert model_item.child(0).data(0, Qt.UserRole)[0] == "signal"
@@ -214,6 +225,39 @@ def test_mainwindow_model_page_binds_inline():
     assert p.port_binding(name, "IN_KnbVal_Z") == "adc channel=0"
     assert p.port_binding(name, "OUT_Led1_B") == "dio port=B bit=5"
     assert [d for d in p.diagnostics() if d.severity == "error"] == []
+    w.close()
+
+
+def test_mainwindow_asw_task_page_authors_interface():
+    # A hand ASW task's page exposes an editable interface table (Signal, Dir,
+    # Type, Driver, Params, Description, remove) + a calibrations table; Apply
+    # commits type/description/binding straight from the row widgets.
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QComboBox, QTableWidget
+    _app()
+    p = ProjectModel()
+    p.new("demo", "arduino_uno")
+    p.make_asw_task("main")                         # 100 ms task -> ASW
+    p.add_port("main", "in", "IN_Knob", "uint16_T", "knob")
+    p.add_calibration("main", "Kp", "uint16_T", 5, "gain")
+    w = MainWindow(p)
+    w._sel = ("asw", "main")
+    w._show_inspector()
+    tables = w.inspector.widget().findChildren(QTableWidget)
+    iface, cals = tables[0], tables[1]
+    assert iface.horizontalHeaderItem(5).text() == "Description"
+    assert iface.item(0, 0).text() == "IN_Knob"
+    iface.cellWidget(0, 3).setCurrentText("adc")    # driver -> adc, params dropdown
+    iface.cellWidget(0, 4).findChild(QComboBox).setCurrentText("channel 0")
+    assert cals.item(0, 0).text() == "Kp"
+    w._apply_task()
+    assert p.port_binding("main", "IN_Knob") == "adc channel=0"
+    # a plain task instead offers to become an ASW task
+    w._sel = ("task", "init")
+    w._show_inspector()
+    from PySide6.QtWidgets import QPushButton
+    labels = [b.text() for b in w.inspector.widget().findChildren(QPushButton)]
+    assert any("make this an ASW task" in t for t in labels)
     w.close()
 
 

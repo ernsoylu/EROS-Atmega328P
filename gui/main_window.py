@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
         # model's page (select a model on the left).
         editm = self.menuBar().addMenu("&Edit")
         editm.addAction("Add &Task…").triggered.connect(self.add_task_dialog)
-        editm.addAction("Add &Model from codegen…").triggered.connect(
+        editm.addAction("Add &Codegen Task…").triggered.connect(
             self.add_model_dialog)
         editm.addSeparator()
         editm.addAction("&Remove Selected").triggered.connect(
@@ -137,30 +137,31 @@ class MainWindow(QMainWindow):
         sysitem = QTreeWidgetItem(self.tree, [f"System: {p.name}", p.mcu])
         sysitem.setData(0, Qt.UserRole, ("system",))
 
-        sched = p.schedule()
-        troot = QTreeWidgetItem(self.tree, ["Tasks · by priority", str(len(sched))])
-        troot.setData(0, Qt.UserRole, ("section",))
-        for r in sched:
-            self._task_row_item(troot, r)
+        # Tasks (plain + hand ASW + codegen) grouped by rate; within a rate,
+        # ordered by priority (most-urgent first). ◆ = codegen task, ⬡ = hand
+        # ASW task (has an interface).
+        for label, rows in p.rate_groups():
+            grp = QTreeWidgetItem(self.tree, [f"@ {label}", f"{len(rows)}"])
+            grp.setData(0, Qt.UserRole, ("section",))
+            for r in rows:
+                self._task_row_item(grp, r)
         self.tree.expandAll()
         self.tree.blockSignals(False)
         self._reselect()
 
+    _MARK = {"model": " ◆", "asw": " ⬡", "task": ""}
+
     def _task_row_item(self, parent, r):
-        """One schedule row: a declared task, or a model (◆) that becomes its own
-        OS task. Models expand to their bound/unbound signals."""
-        mark = " ◆" if r["is_model"] else ""
-        if r["autostart"]:
-            timing = "autostart"
-        elif r["period_ms"]:
-            timing = f"{r['period_ms']} ms"
-        else:
-            timing = "aperiodic"
-        prio = "" if r["priority"] is None else f"P{r['priority']} · "
-        item = QTreeWidgetItem(parent, [r["name"] + mark, f"{prio}{timing}"])
-        kind = "model" if r["is_model"] else "task"
+        """One schedule row within its rate group. Codegen tasks (◆) and hand ASW
+        tasks (⬡) expand to their bound/unbound signals; the value column shows
+        the engine priority."""
+        mark = self._MARK.get(r["kind"], "")
+        prio = "—" if r["priority"] is None else f"P{r['priority']}"
+        item = QTreeWidgetItem(parent, [r["name"] + mark, prio])
+        kind = "model" if r["kind"] == "model" else (
+            "asw" if r["kind"] == "asw" else "task")
         item.setData(0, Qt.UserRole, (kind, r["name"]))
-        if r["is_model"]:
+        if r["kind"] in ("model", "asw"):
             for sig, direction in self.project.model_port_signals(r["name"]):
                 binding = self.project.port_binding(r["name"], sig)
                 si = QTreeWidgetItem(item, [sig, f"{direction} · {binding}"])
@@ -206,10 +207,14 @@ class MainWindow(QMainWindow):
         kind = self._sel[0]
         if kind == "system":
             page = self._page_system()
-        elif kind == "task":
+        elif kind in ("task", "asw"):
             page = self._page_task(self._sel[1])
-        elif kind in ("model", "signal"):
+        elif kind == "model":
             page = self._page_model(self._sel[1])
+        elif kind == "signal":               # a port under a codegen or ASW task
+            name = self._sel[1]
+            page = (self._page_task(name) if self.project.is_asw(name)
+                    else self._page_model(name))
         else:
             page = QLabel("Select a node on the left.")
         self.inspector.setWidget(page)
@@ -291,6 +296,9 @@ class MainWindow(QMainWindow):
         return w
 
     def _page_task(self, tname):
+        """A task's config: timing + within-rate priority, and - for a hand ASW
+        task - its editable interface (in/out ports bound to peripherals) and
+        calibrations. A plain task offers 'Add interface' to become one."""
         p = self.project
         row = next((r for r in p.schedule()
                     if not r["is_model"] and r["name"] == tname), None)
@@ -299,11 +307,26 @@ class MainWindow(QMainWindow):
         if row is None:
             lay.addWidget(QLabel(f"Task '{tname}' not found."))
             return w
-        gb = QGroupBox(f"Task: {tname}")
+        is_asw = p.is_asw(tname)
+        kind = "ASW task" if is_asw else "task"
+        gb = QGroupBox(f"{kind}: {tname}")
         form = QFormLayout(gb)
+
         prio = "—" if row["priority"] is None else f"P{row['priority']}"
-        form.addRow("Priority",
-                    QLabel(f"{prio}  (rate-monotonic, engine-assigned)"))
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel(f"{prio}"))
+        up = QPushButton("▲ more urgent")
+        down = QPushButton("▼ less urgent")
+        up.clicked.connect(lambda: self._move_task(tname, True))
+        down.clicked.connect(lambda: self._move_task(tname, False))
+        for b in (up, down):
+            b.setEnabled(bool(row["period_ms"]))   # ordering is within a rate
+            prow.addWidget(b)
+        prow.addStretch(1)
+        pw = QWidget()
+        pw.setLayout(prow)
+        form.addRow("Priority (within rate)", pw)
+
         autostart = QCheckBox("autostart (runs once at boot)")
         autostart.setChecked(row["autostart"])
         form.addRow("", autostart)
@@ -321,29 +344,144 @@ class MainWindow(QMainWindow):
             period.setDisabled(autostart.isChecked())
         autostart.toggled.connect(lambda _=None: sync())
         sync()
-
-        apply = QPushButton("Apply")
-        apply.clicked.connect(lambda: self._apply_task(
-            tname, period.value(), wcet.value(), autostart.isChecked()))
         lay.addWidget(gb)
+
+        iface_states, cal_states = [], []
+        if is_asw:
+            lay.addWidget(QLabel("Interfaces — in/out ports (erosgen emits "
+                                 f"{tname}_Intfc.* and binds these to drivers):"))
+            table, iface_states = self._interface_table(tname, editable=True)
+            lay.addWidget(table, 1)
+            btns = QHBoxLayout()
+            for text, d in (("+ Input", "in"), ("+ Output", "out")):
+                b = QPushButton(text)
+                b.clicked.connect(lambda _=None, dd=d: self._add_port(tname, dd))
+                btns.addWidget(b)
+            btns.addStretch(1)
+            bw = QWidget()
+            bw.setLayout(btns)
+            lay.addWidget(bw)
+
+            lay.addWidget(QLabel(f"Calibrations — tunables in {tname}_Param.*:"))
+            ctable, cal_states = self._calibration_table(tname)
+            lay.addWidget(ctable)
+            addc = QPushButton("+ Calibration")
+            addc.clicked.connect(lambda: self._add_calibration(tname))
+            lay.addWidget(addc)
+        else:
+            hint = QPushButton("Add interface (make this an ASW task)")
+            hint.clicked.connect(lambda: self._make_asw(tname))
+            lay.addWidget(hint)
+
+        self._task_page = {"name": tname, "period": period, "wcet": wcet,
+                           "autostart": autostart, "iface": iface_states,
+                           "cals": cal_states}
+        apply = QPushButton("Apply")
+        apply.clicked.connect(lambda: self._apply_task())
         lay.addWidget(apply)
         lay.addStretch(1)
         return w
 
+    def _interface_table(self, name, editable):
+        """Shared in/out binding table for an SWC (codegen model or hand ASW
+        task). Columns: Signal, Dir, Type, Driver, Params[, Description, ✕].
+        `editable` (hand task) makes Type/Description editable and adds a remove
+        button; a codegen model's Signal/Type are read-only (parsed from C).
+        Returns (table, states) where each state commits its row on Apply."""
+        p = self.project
+        rows = p.model_interfaces(name)
+        drivers = p.available_drivers()
+        cols = (["Signal", "Dir", "Type", "Driver", "Params", "Description", ""]
+                if editable else ["Signal", "Dir", "Type", "Driver", "Params"])
+        table = QTableWidget(len(rows), len(cols))
+        table.setHorizontalHeaderLabels(cols)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        states = []
+        for i, r in enumerate(rows):
+            table.setItem(i, 0, _ro(r["signal"]))
+            table.setItem(i, 1, _ro(r["direction"]))
+            st = {"signal": r["signal"], "get": (lambda: {})}
+            if editable:
+                tcombo = QComboBox()
+                tcombo.addItems(p.available_signal_types())
+                j = tcombo.findText(r["ctype"])
+                if j >= 0:
+                    tcombo.setCurrentIndex(j)
+                table.setCellWidget(i, 2, tcombo)
+                st["type"] = tcombo
+            else:
+                table.setItem(i, 2, _ro(r["ctype"]))
+            combo = QComboBox()
+            combo.addItem("(unbound)")
+            combo.addItems([d for d in sorted(drivers)
+                            if r["direction"] in drivers[d]["directions"]])
+            if r["driver"]:
+                k = combo.findText(r["driver"])
+                if k >= 0:
+                    combo.setCurrentIndex(k)
+            table.setCellWidget(i, 3, combo)
+            st["combo"] = combo
+            self._fill_params_cell(table, i, r["driver"], r["params"], st)
+            combo.currentTextChanged.connect(
+                lambda drv, row=i, s=st: self._fill_params_cell(table, row, drv,
+                                                                {}, s))
+            if editable:
+                desc = QLineEdit(r["description"])
+                table.setCellWidget(i, 5, desc)
+                st["desc"] = desc
+                rm = QPushButton("✕")
+                rm.clicked.connect(lambda _=None, sig=r["signal"]:
+                                   self._remove_port(name, sig))
+                table.setCellWidget(i, 6, rm)
+            states.append(st)
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        return table, states
+
+    def _calibration_table(self, name):
+        p = self.project
+        cals = p.calibrations(name)
+        table = QTableWidget(len(cals), 5)
+        table.setHorizontalHeaderLabels(["Name", "Type", "Value", "Description",
+                                         ""])
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        states = []
+        for i, c in enumerate(cals):
+            table.setItem(i, 0, _ro(c["name"]))
+            tcombo = QComboBox()
+            tcombo.addItems(p.available_signal_types())
+            j = tcombo.findText(c["type"])
+            if j >= 0:
+                tcombo.setCurrentIndex(j)
+            table.setCellWidget(i, 1, tcombo)
+            val = QLineEdit(str(c["value"]))
+            table.setCellWidget(i, 2, val)
+            desc = QLineEdit(c["description"])
+            table.setCellWidget(i, 3, desc)
+            rm = QPushButton("✕")
+            rm.clicked.connect(lambda _=None, cn=c["name"]:
+                               self._remove_calibration(name, cn))
+            table.setCellWidget(i, 4, rm)
+            states.append({"name": c["name"], "type": tcombo, "value": val,
+                           "desc": desc})
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        return table, states
+
     def _page_model(self, mname):
-        """The model's in/out interfaces as an editable binding table: pick a
-        driver per signal and give its params, then Apply. This is the interface
-        binding the user asked for - all in/out signals in one place, each
-        assignable to a peripheral."""
+        """A Codegen Task (Simulink SWC): its interface is parsed from the codegen
+        dir (Signal/Type read-only); bind each in/out signal to a peripheral."""
         p = self.project
         meta = p.model_meta(mname)
         w = QWidget()
         lay = QVBoxLayout(w)
         if not meta:
-            lay.addWidget(QLabel(f"Model '{mname}' not found."))
+            lay.addWidget(QLabel(f"Codegen Task '{mname}' not found."))
             return w
 
-        gb = QGroupBox(f"Model: {mname}")
+        gb = QGroupBox(f"Codegen Task: {mname}")
         form = QFormLayout(gb)
         form.addRow("codegen", QLabel(str(meta.get("codegen_dir") or "—")))
         form.addRow("runnable", QLabel(str(meta.get("runnable") or "—")))
@@ -355,38 +493,7 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(QLabel(
             "Interfaces — bind each in/out signal to a peripheral driver:"))
-        rows = p.model_interfaces(mname)
-        drivers = p.available_drivers()
-        table = QTableWidget(len(rows), 5)
-        table.setHorizontalHeaderLabels(
-            ["Signal", "Dir", "Type", "Driver", "Params"])
-        table.verticalHeader().setVisible(False)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-        states = []
-        for i, r in enumerate(rows):
-            table.setItem(i, 0, _ro(r["signal"]))
-            table.setItem(i, 1, _ro(r["direction"]))
-            table.setItem(i, 2, _ro(r["ctype"]))
-            combo = QComboBox()
-            combo.addItem("(unbound)")
-            combo.addItems([d for d in sorted(drivers)
-                            if r["direction"] in drivers[d]["directions"]])
-            if r["driver"]:
-                j = combo.findText(r["driver"])
-                if j >= 0:
-                    combo.setCurrentIndex(j)
-            table.setCellWidget(i, 3, combo)
-            # Params are picked from MCU-limited dropdowns (channel / pin), never
-            # typed - so a binding is always well-formed (no parse errors, no
-            # invalid channel/pin). The cell rebuilds when the driver changes.
-            state = {"signal": r["signal"], "combo": combo, "get": (lambda: {})}
-            self._fill_params_cell(table, i, r["driver"], r["params"], state)
-            combo.currentTextChanged.connect(
-                lambda drv, row=i, st=state:
-                    self._fill_params_cell(table, row, drv, {}, st))
-            states.append(state)
-        table.resizeColumnsToContents()
-        table.horizontalHeader().setStretchLastSection(True)
+        table, states = self._interface_table(mname, editable=False)
         lay.addWidget(table, 1)
 
         self._model_page = {"name": mname, "rate": rate, "states": states}
@@ -457,8 +564,63 @@ class MainWindow(QMainWindow):
             self.project.set_mcu(board)
             self._defer_refresh()
 
-    def _apply_task(self, name, period_ms, wcet_ms, autostart):
-        self.project.update_task(name, period_ms, wcet_ms, autostart)
+    def _apply_task(self):
+        page = getattr(self, "_task_page", None)
+        if not page:
+            return
+        name = page["name"]
+        self.project.update_task(name, page["period"].value(),
+                                 page["wcet"].value(),
+                                 page["autostart"].isChecked())
+        for st in page["iface"]:               # ports: type/description + binding
+            if "type" in st:
+                self.project.set_port_meta(name, st["signal"],
+                                           ctype=st["type"].currentText(),
+                                           description=st["desc"].text())
+            drv = st["combo"].currentText()
+            if drv == "(unbound)":
+                self.project.unbind_port(name, st["signal"])
+            else:
+                self.project.bind_port(name, st["signal"], drv, **st["get"]())
+        for st in page["cals"]:                # calibration type/value/description
+            val = st["value"].text().strip()
+            self.project.set_calibration(
+                name, st["name"], ctype=st["type"].currentText(),
+                value=int(val) if val.lstrip("-").isdigit() else val,
+                description=st["desc"].text())
+        self._log(f"applied {name}")
+        self._defer_refresh()
+
+    def _move_task(self, name, up):
+        if self.project.move_in_rate(name, up):
+            self._defer_refresh()
+
+    def _make_asw(self, name):
+        self.project.make_asw_task(name)
+        self._defer_refresh()
+
+    def _add_port(self, name, direction):
+        from PySide6.QtWidgets import QInputDialog
+        pfx = "IN_" if direction == "in" else "OUT_"
+        sig, ok = QInputDialog.getText(self, f"Add {direction} port",
+                                       "Signal name:", text=pfx)
+        if ok and sig.strip():
+            self.project.add_port(name, direction, sig.strip())
+            self._defer_refresh()
+
+    def _remove_port(self, name, signal):
+        self.project.remove_port(name, signal)
+        self._defer_refresh()
+
+    def _add_calibration(self, name):
+        from PySide6.QtWidgets import QInputDialog
+        cal, ok = QInputDialog.getText(self, "Add calibration", "Name:")
+        if ok and cal.strip():
+            self.project.add_calibration(name, cal.strip())
+            self._defer_refresh()
+
+    def _remove_calibration(self, name, cal):
+        self.project.remove_calibration(name, cal)
         self._defer_refresh()
 
     def _apply_model(self):
@@ -555,7 +717,8 @@ class MainWindow(QMainWindow):
 
     def add_task_dialog(self):
         # A typed form (QSpinBox) instead of comma-parsed free text - bad
-        # numbers are now impossible rather than caught after the fact.
+        # numbers are now impossible rather than caught after the fact. An ASW
+        # task also gets an interface + the <name>{,_Intfc,_Param} skeletons.
         from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout,
                                        QLineEdit, QSpinBox)
         dlg = QDialog(self)
@@ -569,18 +732,23 @@ class MainWindow(QMainWindow):
         wcet = QSpinBox()
         wcet.setRange(1, 32767)
         wcet.setValue(1)
+        asw = QCheckBox("ASW task (add an interface + generate skeleton files)")
+        asw.setChecked(True)
         form.addRow("Name", name)
         form.addRow("Period ms", period)
         form.addRow("WCET ms", wcet)
+        form.addRow("", asw)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
         form.addRow(bb)
         if dlg.exec() != QDialog.Accepted or not name.text().strip():
             return
-        self.project.add_task(name.text().strip(), period.value() or None,
-                              wcet.value())
-        self._sel = ("task", name.text().strip())
+        nm = name.text().strip()
+        self.project.add_task(nm, period.value() or None, wcet.value())
+        if asw.isChecked():
+            self.project.make_asw_task(nm)
+        self._sel = ("asw" if asw.isChecked() else "task", nm)
         self.refresh()
 
     def add_model_dialog(self):
@@ -591,27 +759,29 @@ class MainWindow(QMainWindow):
         try:
             name, sigs, runnable = self.project.model_signals(d)
         except Exception as e:
-            QMessageBox.warning(self, "Add Model", f"Could not parse: {e}")
+            QMessageBox.warning(self, "Add Codegen Task", f"Could not parse: {e}")
             return
-        rate, ok = QInputDialog.getInt(self, "Add Model",
+        rate, ok = QInputDialog.getInt(self, "Add Codegen Task",
                                        f"{name}: runnable rate (ms)", 10, 1, 32767)
         if not ok:
             return
         self.project.add_model(name, d, runnable, rate)
         self._sel = ("model", name)
-        self._log(f"added model {name}: {len(sigs)} signals — bind their ports "
-                  "on the right")
+        self._log(f"added codegen task {name}: {len(sigs)} signals — bind their "
+                  "ports on the right")
         self.refresh()
 
     def remove_selected(self):
-        kind = self._sel[0]
-        if kind == "task":
-            self.project.remove_task(self._sel[1])
-        elif kind in ("model", "signal"):
-            self.project.remove_model(self._sel[1])
+        kind, name = self._sel[0], (self._sel[1] if len(self._sel) > 1 else None)
+        if kind == "signal":                    # route by what owns the port
+            kind = "asw" if self.project.is_asw(name) else "model"
+        if kind in ("task", "asw"):
+            self.project.remove_task(name)
+        elif kind == "model":
+            self.project.remove_model(name)
         else:
             QMessageBox.information(self, "Remove",
-                                    "Select a task or model to remove.")
+                                    "Select a task or codegen task to remove.")
             return
         self._sel = ("system",)
         self.refresh()
