@@ -33,7 +33,7 @@ void Asw_RampReset(void)
 {
     duty   = 0u;
     rampUp = 1u;
-    PWM_SetDutyPermille(0u);
+    Pwm_SetDutyCycle(0u);
 }
 
 /**
@@ -67,7 +67,7 @@ void Task_Ramp(void)
                 duty -= RAMP_STEP_PERMILLE;
             }
         }
-        PWM_SetDutyPermille(duty);
+        Pwm_SetDutyCycle(duty);
     }
     TerminateTask();
 }

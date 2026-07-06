@@ -9,15 +9,23 @@ with atomic fetch functions. Blocking calls are hardware-bounded or
 timeout-capped so each has a documented WCET for the task budget table.
 
 **MCAL naming (Phase 7, in progress).** Drivers are migrating to
-AUTOSAR-MCAL-style module prefixes — `<Mod>_<Verb>` in MixedCase. The ADC
-module leads: `Adc_Init` / `Adc_ReadChannel` (was `ADC_Init` / `ADC_Read`),
-plus `Adc_ReadVccMillivolts` / `Adc_ReadTempRaw`; the RTE generator
-(`bind.py` / `emit/rte.py`) and the MCU profiles emit these names. Semantics
-are unchanged (single-channel blocking read; the AUTOSAR group/buffer API is
-not adopted on this 8-bit target). The remaining modules and the physical
-MCAL/Services/CDD directory topology follow in later increments; note
-`reference-demo/`'s app-local `pwm.c`/`uart.c` keep their `PWM_*`/`UART_*`
-names (they predate the shared drivers and are compiled into that demo).
+AUTOSAR-MCAL-style module prefixes — `<Mod>_<Verb>` in MixedCase — one module
+at a time. Done so far:
+
+- **Adc** — `Adc_Init` / `Adc_ReadChannel` (was `ADC_Init` / `ADC_Read`), plus
+  `Adc_ReadVccMillivolts` / `Adc_ReadTempRaw`. Single-channel blocking read; the
+  AUTOSAR group/buffer API is not adopted on this 8-bit target.
+- **Pwm** — `Pwm_Init` / `Pwm_SetDutyCycle` / `Pwm_GetDutyCycle` (was
+  `PWM_Init` / `PWM_SetDutyPermille` / `PWM_GetDutyPermille`). The duty argument
+  stays **permille (0..1000)**, not AUTOSAR's 0..0x8000 — documented deviation.
+  Renamed in both the shared `drivers/pwm.c` and `reference-demo/`'s app-local
+  copy + its callers, so the name is consistent repo-wide.
+
+The RTE generator (`bind.py` / `emit/rte.py`) and the MCU profiles emit these
+names. `Timer0` PWM stays `T0PWM_*` (a distinct module), and `reference-demo`'s
+`uart.c` keeps `UART_*` for now. The remaining modules, the physical
+MCAL/Services/CDD directory topology, and `<Mod>_MainFunction_<rate>ms` task
+wiring follow in later increments.
 
 | Driver | Peripheral | Nano pins | ISRs | WCET notes |
 |---|---|---|---|---|

@@ -84,7 +84,7 @@ conflicts:
 
 driver_init:
   uart:       "UART_Init();"
-  pwm:        "PWM_Init();"
+  pwm:        "Pwm_Init();"
   adc:        "Adc_Init();"
   i2c:        "I2C_Init();"
   spi:        "SPI_Init(SPI_MODE0, SPI_CLK_DIV16);"

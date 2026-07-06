@@ -68,7 +68,7 @@ void Asw_PrintStatus(void)
     UART_Print_P(PSTR("t="));
     UART_PrintU16(GetCounterValue());
     UART_Print_P(PSTR(" duty="));
-    UART_PrintU16(PWM_GetDutyPermille());
+    UART_PrintU16(Pwm_GetDutyCycle());
     UART_Print_P(PSTR(" run="));
     (void)UART_PutChar((aswRampRun != 0u) ? '1' : '0');
     UART_Print_P(PSTR(" err="));

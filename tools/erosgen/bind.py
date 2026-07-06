@@ -32,9 +32,9 @@ DRIVERS = {
                       ("port", "bit"), "", boolean=True),
     # Timer1 PWM on the fixed OC1A pin; duty is permille (0..1000), so uint16 -
     # no channel/pin binding param needed (unlike adc/dio). Matches pwm.h's
-    # PWM_SetDutyPermille(uint16_t).
+    # Pwm_SetDutyCycle(uint16_t).
     "pwm": DriverSpec("pwm", ("out",), "uint16_t", 1000, "pwm.h",
-                      (), "PWM_Init();"),
+                      (), "Pwm_Init();"),
 }
 
 

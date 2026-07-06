@@ -67,7 +67,7 @@ void StartupHook(void)
     DDRD  &= (uint8_t)~(1u << PD2);                /* button input...     */
     PORTD |= (uint8_t)(1u << PD2);                 /* ...internal pull-up */
     UART_Init();
-    PWM_Init();
+    Pwm_Init();
 }
 
 /** May run in tick-ISR context (e.g. a deadline miss). It must therefore

@@ -21,12 +21,12 @@
 
 /** Configure Timer1 mode 14 at the compiled frequency, duty 0, OC1A/PB1 output.
  *  Call with interrupts disabled (e.g. from StartupHook()). */
-void PWM_Init(void);
+void Pwm_Init(void);
 
 /** Set duty cycle in permille; values above 1000 are clamped. */
-void PWM_SetDutyPermille(uint16_t permille);
+void Pwm_SetDutyCycle(uint16_t permille);
 
 /** Last commanded duty cycle in permille. */
-uint16_t PWM_GetDutyPermille(void);
+uint16_t Pwm_GetDutyCycle(void);
 
 #endif /* PWM_H */

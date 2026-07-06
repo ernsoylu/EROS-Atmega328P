@@ -188,10 +188,19 @@ with it and are migrated separately, not by a blind repo-wide rename).
       reference-demo (budget gates) + fixtures, `avr-nm` confirms `Adc_*` symbols.
       Note: kept the AUTOSAR *group* API (`Adc_ReadGroup`) out — single-channel
       blocking `Adc_ReadChannel` matches the 8-bit target; documented.
-- [ ] **Remaining MCAL/CDD modules** (pwm/spi/i2c/gpt/icu/dio/…) → AUTOSAR names,
-      one coherent module at a time; `pwm` needs the `reference-demo` app-local
-      driver untangled first (shared `drivers/pwm.c` is used by no built fixture
-      today — verify before renaming).
+- [x] **MCAL naming — PWM** (increment 2): `PWM_Init`/`PWM_SetDutyPermille`/
+      `PWM_GetDutyPermille` → `Pwm_Init`/`Pwm_SetDutyCycle`/`Pwm_GetDutyCycle`
+      (duty stays permille 0..1000 — documented deviation). Renamed **both** the
+      shared `drivers/pwm.c` and `reference-demo`'s app-local `pwm.c` + callers
+      (`asw_100ms.c`, `asw_signals.c`, `main.c`) so the name is consistent
+      repo-wide, plus `bind.py`/`emit/rte.py`/both MCU profiles. **No golden
+      changed** (config.*/Makefile carry no function names; no fixture binds pwm).
+      reference-demo actually exercises PWM (breathing LED), so its build + budget
+      gates + fresh map (`Pwm_SetDutyCycle`) verify the rename; goldens stayed
+      byte-identical. (Careful: `PWM_Init` is a substring of Timer0's `T0PWM_Init`
+      — kept `T0PWM_*` distinct.)
+- [ ] **Remaining MCAL/CDD modules** (spi/i2c/gpt/icu/dio/uart/timer0/…) →
+      AUTOSAR names, one coherent module at a time.
 - [ ] Restructure toward the AUTOSAR topology dirs: MCAL, Services (EcuM-like
       startup, Dem-like error sink, Com-like IPC over the mailbox+pool),
       ComplexDeviceDriver (uart/watchdog) — file moves + Makefile path churn.
