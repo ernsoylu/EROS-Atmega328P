@@ -176,16 +176,17 @@ class ProjectModel:
         return out
 
     def bind_port(self, model_name, signal, driver, **params):
-        """Bind a model's port signal to a peripheral driver (+ params)."""
-        for m in self.doc.get("models", []) or []:
-            if isinstance(m, dict) and m.get("name") == model_name:
-                for direction in ("in", "out"):
-                    for pd in (m.get("ports", {}) or {}).get(direction, []) or []:
-                        if isinstance(pd, dict) and pd.get("signal") == signal:
-                            pd["driver"] = driver
-                            pd.update(params)
-                            return True
-        return False
+        """Bind a model's port signal to a peripheral driver (+ params). Stale
+        binding params from a previous driver are cleared first, so re-binding
+        adc->pwm can't leave an orphaned 'channel' behind."""
+        pd = self._port_dict(model_name, signal)
+        if pd is None:
+            return False
+        for k in ("channel", "port", "bit", "slope", "offset"):
+            pd.pop(k, None)
+        pd["driver"] = driver
+        pd.update(params)
+        return True
 
     def port_binding(self, model_name, signal):
         """Human-readable binding for a port ('adc channel=0', 'unbound', ...)."""
@@ -268,6 +269,12 @@ class ProjectModel:
             self.doc["tasks"] = [t for t in tasks if not (
                 isinstance(t, dict) and t.get("name") == name)]
 
+    def remove_model(self, name):
+        models = self.doc.get("models")
+        if isinstance(models, list):
+            self.doc["models"] = [m for m in models if not (
+                isinstance(m, dict) and m.get("name") == name)]
+
     def generate(self):
         """Save, then run the generator. Returns (ok, report_text)."""
         if self.path is None:
@@ -277,3 +284,147 @@ class ProjectModel:
         with contextlib.redirect_stdout(buf):
             rc = erosgen.main(["erosgen", str(self.path)])
         return rc == 0, buf.getvalue()
+
+    # ---- unified schedule (declared tasks + one OS task per model) -------
+    def schedule(self):
+        """Every runnable the kernel schedules, most-urgent first.
+
+        Each `models:` entry becomes its own periodic OS task (period = rate_ms),
+        so models belong *among* the tasks, not in a separate list. Priorities
+        come from the engine (SSOT: System._assign_priorities) so the order shown
+        is exactly the order the kernel runs them in. Rows:
+        {name, is_model, period_ms, wcet_ms, autostart, priority}."""
+        prio = self._engine_priorities()
+        rows = []
+        for t in self.plain.get("tasks", []) or []:
+            if isinstance(t, dict):
+                rows.append({"name": t.get("name", "?"), "is_model": False,
+                             "period_ms": t.get("period_ms"),
+                             "wcet_ms": t.get("wcet_ms", 1),
+                             "autostart": bool(t.get("autostart", False)),
+                             "priority": prio.get(str(t.get("name", "")).upper())})
+        for m in self.plain.get("models", []) or []:
+            if isinstance(m, dict):
+                rows.append({"name": m.get("name", "?"), "is_model": True,
+                             "period_ms": m.get("rate_ms"),
+                             "wcet_ms": m.get("wcet_ms", 1), "autostart": False,
+                             "priority": prio.get(str(m.get("name", "")).upper())})
+        # higher engine priority number = more urgent (rate-monotonic); unknown
+        # priorities (config too broken to build) sort last, in listed order.
+        rows.sort(key=lambda r: (r["priority"] is None, -(r["priority"] or 0)))
+        return rows
+
+    def _engine_priorities(self):
+        """{TASKNAME_UPPER: priority} from the engine, or {} if it can't build.
+        Collect mode so an errored config (unbound ports, bad MCU) still yields
+        the priority map the schedule view needs."""
+        from erosgen import Diagnostics
+        try:
+            s = erosgen.System(self.plain, self.path or Path("app.yaml"),
+                               sink=Diagnostics(strict=False))
+            return {t.name: t.priority for t in s.tasks}
+        except Exception:      # pragma: no cover - engine is best-effort here
+            return {}
+
+    # ---- System page: MCU config + facts --------------------------------
+    def hooks(self):
+        return dict(self._system().get("hooks", {}) or {})
+
+    def set_hook(self, name, on):
+        self.doc.setdefault("system", {}).setdefault("hooks", {})[name] = bool(on)
+
+    def system_facts(self):
+        """Read-only MCU profile facts for the System page. Best-effort: an
+        unknown MCU (no mcu/<name>.yaml) returns {} rather than raising."""
+        try:
+            from erosgen.mcu.profile import load_profile
+            pr = load_profile(self.mcu)
+        except Exception:
+            return {}
+        return {"f_cpu": pr.f_cpu, "programmer": pr.avrdude_programmer,
+                "baud": pr.avrdude_baud, "part": pr.avrdude_part,
+                "peripherals": sorted(pr.known_peripherals)}
+
+    # ---- Task page ------------------------------------------------------
+    def update_task(self, name, period_ms, wcet_ms, autostart):
+        """Edit a declared task in place. period_ms falsy + not autostart =>
+        aperiodic (neither key set)."""
+        for t in self.doc.get("tasks", []) or []:
+            if isinstance(t, dict) and t.get("name") == name:
+                t["wcet_ms"] = int(wcet_ms)
+                t.pop("autostart", None)
+                t.pop("period_ms", None)
+                if autostart:
+                    t["autostart"] = True
+                elif period_ms:
+                    t["period_ms"] = int(period_ms)
+                return True
+        return False
+
+    # ---- Model page: interfaces + inline binding ------------------------
+    def _model_entry(self, name):
+        for m in self.doc.get("models", []) or []:
+            if isinstance(m, dict) and m.get("name") == name:
+                return m
+        return None
+
+    def model_meta(self, name):
+        m = self._model_entry(name)
+        if not m:
+            return {}
+        return {"codegen_dir": m.get("codegen_dir", ""),
+                "runnable": m.get("runnable", ""), "rate_ms": m.get("rate_ms")}
+
+    def set_model_rate(self, name, rate_ms):
+        m = self._model_entry(name)
+        if m is not None:
+            m["rate_ms"] = int(rate_ms)
+
+    def _port_dict(self, model_name, signal):
+        """The mutable ruamel port mapping for a signal (edits round-trip)."""
+        m = self._model_entry(model_name)
+        for direction in ("in", "out"):
+            for pd in (m.get("ports", {}) or {}).get(direction, []) or [] if m else []:
+                if isinstance(pd, dict) and pd.get("signal") == signal:
+                    return pd
+        return None
+
+    def available_drivers(self):
+        """{driver: {directions, required}} - which drivers can serve which port
+        direction and what binding params each needs (channel / port+bit / none).
+        Lets the Model page offer only valid drivers per signal."""
+        from erosgen.bind import DRIVERS
+        return {n: {"directions": list(d.directions), "required": list(d.required)}
+                for n, d in DRIVERS.items()}
+
+    def model_interfaces(self, model_name):
+        """Every in/out interface of a model for the binding table. Rows:
+        {signal, direction, ctype, driver, params}. ctype comes from parsing the
+        codegen dir (best-effort '?' if it's missing); driver/params are the
+        current binding (driver None => unbound)."""
+        ctypes = {}
+        cg = (self._model_entry(model_name) or {}).get("codegen_dir")
+        if cg:
+            try:
+                _n, sigs, _r = self.model_signals(cg, name=model_name)
+                ctypes = {s: c for s, c, _d in sigs}
+            except Exception:
+                pass
+        rows = []
+        for sig, direction in self.model_port_signals(model_name):
+            pd = self._port_dict(model_name, sig) or {}
+            rows.append({
+                "signal": sig, "direction": direction,
+                "ctype": ctypes.get(sig, "?"), "driver": pd.get("driver"),
+                "params": {k: pd[k] for k in ("channel", "port", "bit")
+                           if k in pd}})
+        return rows
+
+    def unbind_port(self, model_name, signal):
+        """Clear a port's binding (back to 'unbound')."""
+        pd = self._port_dict(model_name, signal)
+        if pd is not None:
+            for k in ("driver", "channel", "port", "bit", "slope", "offset"):
+                pd.pop(k, None)
+            return True
+        return False
