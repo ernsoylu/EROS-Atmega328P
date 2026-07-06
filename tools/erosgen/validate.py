@@ -34,6 +34,9 @@ ALLOWED_KEYS = {
     "uart":       {"baud", "tx_ring", "rx_ring"},
     "pwm":        {"freq_hz"},   # Timer1 fast-PWM; erosgen picks prescaler + TOP
     "spi":        {"mode", "clock"},   # SPI_Init(SPI_MODE<mode>, SPI_CLK_DIV<clock>)
+    "adc":        {"reference", "prescaler"},  # avcc/internal/aref + /2../128
+    "i2c":        {"speed_hz"},                 # SCL bus speed (100000/400000/...)
+    "timer0_pwm": {"freq_hz"},                  # Timer0 (8-bit); prescaler only
     # RTE generation from a Simulink SWC (see rte/README.md, models: schema).
     "model":      {"name", "codegen_dir", "init", "runnable", "rate_ms",
                    "wcet_ms", "ports", "order"},

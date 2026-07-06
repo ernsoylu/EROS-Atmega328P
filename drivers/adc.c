@@ -10,15 +10,25 @@
 #define ADC_MUX_BANDGAP 0x0Eu /* internal 1.1 V reference as input     */
 #define ADC_MUX_TEMP    0x08u /* on-die temperature sensor             */
 
-/* AVcc reference (REFS0), internal 1.1 V reference (REFS1|REFS0). */
+/* AVcc reference (REFS0), internal 1.1 V (REFS1|REFS0), external AREF (0). */
 #define ADC_REF_AVCC    (uint8_t)(1u << REFS0)
 #define ADC_REF_1V1     (uint8_t)((1u << REFS1) | (1u << REFS0))
+#define ADC_REF_AREF    (uint8_t)0u
+
+/* Configurable reference + prescaler: erosgen overrides these with
+ * -DADC_REF=ADC_REF_* / -DADC_PRESCALER=<ADPS field> from peripherals.adc; the
+ * defaults reproduce the historical AVcc / 125 kHz (F_CPU/128). */
+#ifndef ADC_REF
+#define ADC_REF ADC_REF_AVCC
+#endif
+#ifndef ADC_PRESCALER
+#define ADC_PRESCALER ((1u << ADPS2) | (1u << ADPS1) | (1u << ADPS0)) /* /128 */
+#endif
 
 void ADC_Init(void)
 {
-    ADMUX  = ADC_REF_AVCC; /* channel 0 */
-    ADCSRA = (uint8_t)((1u << ADEN) | (1u << ADPS2) |
-                       (1u << ADPS1) | (1u << ADPS0)); /* /128 */
+    ADMUX  = ADC_REF; /* channel 0 */
+    ADCSRA = (uint8_t)((1u << ADEN) | ADC_PRESCALER);
 }
 
 /** Start one conversion with the current ADMUX and wait for it
@@ -35,7 +45,7 @@ static uint16_t ADC_Convert(void)
 
 uint16_t ADC_Read(uint8_t channel)
 {
-    ADMUX = (uint8_t)(ADC_REF_AVCC | (channel & 0x07u));
+    ADMUX = (uint8_t)(ADC_REF | (channel & 0x07u));
     return ADC_Convert();
 }
 

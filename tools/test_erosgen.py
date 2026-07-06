@@ -911,6 +911,40 @@ def test_spi_config_validation():
     assert not {"SPI_MODE", "SPI_CLOCK"} & codes({"mode": 1, "clock": 64})
 
 
+# --- Configurable ADC / I2C / Timer0 PWM (driver -D overrides) ------------
+
+def _defs(per):
+    from erosgen.emit import periph_defines
+    s = _system("system: { name: t, mcu: atmega328p }\n"
+                "tasks: [{ name: a, period_ms: 10, wcet_ms: 1 }]\n"
+                "resources: [{ name: r, users: [a] }]\n"
+                f"peripherals: {per}\n")
+    return set(periph_defines(s))
+
+
+def test_adc_i2c_timer0_defines():
+    d = _defs("{ adc: { reference: internal, prescaler: 64 } }")
+    assert "-DADC_REF=ADC_REF_1V1" in d and "-DADC_PRESCALER=6u" in d
+    assert "-DI2C_TWBR=12u" in _defs("{ i2c: { speed_hz: 400000 } }")  # fast mode
+    assert "-DT0PWM_CS=2u" in _defs("{ timer0_pwm: { freq_hz: 7812 } }")  # /8
+    # activated but unconfigured -> no -D (driver defaults, byte-identical)
+    bare = _defs("{ adc: {}, i2c: {}, timer0_pwm: {} }")
+    assert not [x for x in bare if any(k in x for k in ("ADC", "I2C", "T0PWM"))]
+
+
+def test_adc_i2c_timer0_validation():
+    def codes(per):
+        doc = {"system": {"name": "t", "mcu": "atmega328p"},
+               "tasks": [{"name": "a", "period_ms": 10, "wcet_ms": 1}],
+               "resources": [{"name": "r", "users": ["a"]}],
+               "peripherals": per}
+        return {d.code for d in erosgen.collect_diagnostics(doc, Path("x"))}
+    assert "ADC_REF" in codes({"adc": {"reference": "bogus"}})
+    assert "ADC_PRESCALER" in codes({"adc": {"prescaler": 5}})     # not a pow2
+    assert "I2C_SPEED" in codes({"i2c": {"speed_hz": 5}})           # TWBR > 255
+    assert "T0PWM_FREQ_ROUND" in codes({"timer0_pwm": {"freq_hz": 5000}})
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

@@ -9,8 +9,12 @@
 #include "i2c.h"
 
 /* TWBR for 100 kHz: SCL = F_CPU / (16 + 2*TWBR*presc), presc = 1
- * -> TWBR = ((16 MHz / 100 kHz) - 16) / 2 = 72. */
+ * -> TWBR = ((16 MHz / 100 kHz) - 16) / 2 = 72. erosgen overrides -DI2C_TWBR
+ * from peripherals.i2c.speed_hz; the default stays 100 kHz. */
 #define I2C_TWBR_100KHZ 72u
+#ifndef I2C_TWBR
+#define I2C_TWBR I2C_TWBR_100KHZ
+#endif
 
 /* Spin cap per TWINT wait. One loop iteration is a handful of cycles;
  * 8000 iterations = ~1.5 ms at 16 MHz - generous against slave clock
@@ -85,7 +89,7 @@ static uint8_t I2C_Sla(uint8_t sla)
 void I2C_Init(void)
 {
     TWSR = 0u;               /* prescaler 1                             */
-    TWBR = I2C_TWBR_100KHZ;
+    TWBR = I2C_TWBR;
     TWCR = (uint8_t)(1u << TWEN);
 }
 

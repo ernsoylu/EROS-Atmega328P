@@ -775,6 +775,18 @@ class ProjectModel:
         except Exception:
             return None
 
+    def timer0_pwm_achieved(self, freq_hz):
+        """Nearest Timer0 PWM frequency (8-bit: prescaler-set only), or None."""
+        try:
+            from erosgen.pwmcfg import f_cpu_hz, pwm_timer, timer0_pwm_cs
+            pr = self._profile()
+            timer = pwm_timer(pr, "timer0_pwm")
+            cfg = (timer0_pwm_cs(int(freq_hz), f_cpu_hz(pr), timer[1])
+                   if timer else None)
+            return cfg[1] if cfg else None
+        except Exception:
+            return None
+
     def _adc_alias_pins(self, pr):
         """{adc_channel: PXn} from the board's A-pin aliases (A0 -> PC0)."""
         return {int(k[1:]): v for k, v in pr.aliases.items()

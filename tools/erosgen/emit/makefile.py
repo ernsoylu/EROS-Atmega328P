@@ -49,6 +49,34 @@ def periph_defines(s):
             cs, top, _ = cfg
             defs.append(f"-DPWM_TOP={top}u")
             defs.append(f"-DPWM_CS={cs}u")
+    # ADC reference + prescaler, I2C bus speed, Timer0 PWM prescaler - each keeps
+    # its driver default when unset (so an activated-but-unconfigured peripheral
+    # is byte-identical).
+    adc = s.peripherals.get("adc")
+    if isinstance(adc, dict):
+        from ..pwmcfg import adc_prescaler_bits, adc_ref_symbol
+        if adc.get("reference") is not None:
+            sym = adc_ref_symbol(adc["reference"])
+            if sym:
+                defs.append(f"-DADC_REF={sym}")
+        if adc.get("prescaler") is not None:
+            bits = adc_prescaler_bits(int(adc["prescaler"]))
+            if bits is not None:
+                defs.append(f"-DADC_PRESCALER={bits}u")
+    i2c = s.peripherals.get("i2c")
+    if isinstance(i2c, dict) and i2c.get("speed_hz") is not None:
+        from ..pwmcfg import f_cpu_hz, i2c_twbr
+        twbr = i2c_twbr(int(i2c["speed_hz"]), f_cpu_hz(s.profile))
+        if twbr is not None:
+            defs.append(f"-DI2C_TWBR={twbr}u")
+    t0 = s.peripherals.get("timer0_pwm")
+    if isinstance(t0, dict) and t0.get("freq_hz") is not None:
+        from ..pwmcfg import f_cpu_hz, pwm_timer, timer0_pwm_cs
+        timer = pwm_timer(s.profile, "timer0_pwm")
+        cfg = (timer0_pwm_cs(int(t0["freq_hz"]), f_cpu_hz(s.profile), timer[1])
+               if timer else None)
+        if cfg is not None:
+            defs.append(f"-DT0PWM_CS={cfg[0]}u")
     return defs
 
 

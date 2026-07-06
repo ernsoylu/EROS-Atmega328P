@@ -301,6 +301,47 @@ class System:
             sink.error("SPI_CLOCK", "spi clock must be an SPI_CLK_DIV divider "
                        "(2, 4, 8, 16, 32, 64, 128)", "peripherals.spi")
 
+        adc = self.peripherals.get("adc") or {}
+        if isinstance(adc, dict) and adc:
+            check_keys(adc, "adc", "peripherals.adc", sink)
+        if adc.get("reference") is not None:
+            from .pwmcfg import adc_ref_symbol
+            if adc_ref_symbol(adc["reference"]) is None:
+                sink.error("ADC_REF", "adc reference must be avcc, internal or "
+                           "aref", "peripherals.adc")
+        if adc.get("prescaler") is not None:
+            from .pwmcfg import adc_prescaler_bits
+            if adc_prescaler_bits(int(adc["prescaler"])) is None:
+                sink.error("ADC_PRESCALER", "adc prescaler must be a power of "
+                           "two 2..128", "peripherals.adc")
+
+        i2c = self.peripherals.get("i2c") or {}
+        if isinstance(i2c, dict) and i2c:
+            check_keys(i2c, "i2c", "peripherals.i2c", sink)
+        if i2c.get("speed_hz") is not None:
+            from .pwmcfg import f_cpu_hz, i2c_twbr
+            if i2c_twbr(int(i2c["speed_hz"]), f_cpu_hz(self.profile)) is None:
+                sink.error("I2C_SPEED", f"i2c speed_hz {i2c['speed_hz']} is out "
+                           "of range at this F_CPU", "peripherals.i2c")
+
+        t0 = self.peripherals.get("timer0_pwm") or {}
+        if isinstance(t0, dict) and t0:
+            check_keys(t0, "timer0_pwm", "peripherals.timer0_pwm", sink)
+        if t0.get("freq_hz") is not None:
+            from .pwmcfg import f_cpu_hz, pwm_timer, timer0_pwm_cs
+            timer = pwm_timer(self.profile, "timer0_pwm")
+            want = int(t0["freq_hz"])
+            cfg = (timer0_pwm_cs(want, f_cpu_hz(self.profile), timer[1])
+                   if timer else None)
+            if cfg is None:
+                sink.error("T0PWM_NO_TIMER", "this MCU has no Timer0 PWM driver",
+                           "peripherals.timer0_pwm")
+            elif abs(cfg[1] - want) > max(1.0, want * 0.05):
+                sink.warning("T0PWM_FREQ_ROUND", f"timer0_pwm freq_hz {want} Hz "
+                             f"-> nearest prescaler-set {cfg[1]:.1f} Hz "
+                             "(Timer0 is 8-bit: TOP fixed at 255)",
+                             "peripherals.timer0_pwm")
+
         # ---- gpio + pin ownership matrix --------------------------------
         self.gpio = self._parse_gpio(doc.get("gpio", []) or [], sink)
         self._check_pins(sink)
