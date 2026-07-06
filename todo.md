@@ -53,7 +53,7 @@ Compressed ledger; detail lives in git history. **Do not re-plan these.**
   (`port.source: "<SWC>.<OUT>"`); validated + RTE-routed.
 - **MCU breadth (same family)** — `MCUProfile` threaded through the tool;
   `system.mcu` selects target; `atmega2560.yaml` + `arduino_uno.yaml` added;
-  `mega_gpio` fixture proves 2560 (PORTL, PB7). ESP32 remains a separate backend.
+  `mega_gpio` fixture proves 2560 (PORTL, PB7). Non-AVR targets are out of scope.
 - **GUI is now an editor, not read-only** (was "deferred"): master-detail
   configurator with in-place editing — Add/Remove Task, Add Codegen Task, Add
   Resource, resource editor, hand-ASW-task authoring, within-rate priority
@@ -252,14 +252,15 @@ grid** does not.
       live via the existing pin→owner check. Read-only clock-tree note (Timer2
       /64, OCR2A=249) to document the fixed 1 kHz tick invariant.
 
-### Phase 10 — Backend protocol + ESP32
+### Phase 10 — Backend protocol
 `backends/avr.py` isolates AVR idioms. Generalize to a `Backend` protocol
-(`pin_init/read/write`, `progmem`, `toolchain`) so `esp32.py`/`cortex_m.py`
-become siblings.
+(`pin_init/read/write`, `progmem`, `toolchain`) so the emitters read a backend
+interface instead of importing `backends.avr` directly — a cleaner seam even
+while AVR is the only backend.
 - [ ] `Backend` protocol; emitters read it instead of importing `backends.avr`.
-- [ ] `backends/esp32.py` — the cheap part; **the kernel port (AVR-asm context
-      switch, no PROGMEM, xtensa toolchain) is the real cost** and stays a
-      separate porting project.
+- **Note:** non-AVR targets (e.g. Cortex-M) are **out of scope** — they need a
+      whole separate kernel port (context switch, no PROGMEM, different
+      toolchain), not just a backend module. This project stays AVR-only.
 
 ### Phase 11 — ASW parser robustness + interchange
 Regex parser is tied to the ExportToFile/Define storage-class contract.
@@ -301,8 +302,9 @@ SystemDesk-class gap worth recording.
   non-preemptive RTA with a blocking term `B_i = max C of lower-prio tasks`.
   Conservative is a *feature* on an 8-task AVR. Store `T_i`/`C_i` per task to
   keep future RTA an option.
-- **ESP32 is a second backend, not a YAML entry** — breaks the emitter layer
-  *and* the kernel (see Phase 10).
+- **A non-AVR target is a full port, not a YAML entry** — it breaks the emitter
+  layer *and* the kernel (context switch, PROGMEM, toolchain), so it is out of
+  scope; the project targets AVR MCUs only (see Phase 10).
 - **relpath hazard:** the generated Makefile embeds
   `python3 ../tools/erosgen.py app.yaml` (relpath app_dir→entrypoint). Moving the
   entrypoint changes that string and breaks the Makefile golden → keep the
