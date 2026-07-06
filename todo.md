@@ -2,167 +2,240 @@
 
 ECU configuration + code-generation tool for the EROS RTOS (SystemDesk-style
 ASW mapping ⊕ CubeMX-style peripheral generation), built by **extending**
-`tools/erosgen.py` — not rebuilding it.
+`tools/erosgen/` — not rebuilding it.
 
 ## Framing: extend, don't rebuild
 
-`tools/erosgen.py` (1061 lines) already implements most of the "Smart Engine",
-and its logic is already decoupled from I/O: model classes
-(`Task`/`Resource`/`System`, `:157`–`:417`) → pure emitters (`System → str`,
-`:423`–`:961`) → thin CLI (`main`, `:1013`). No UI yet, and the core fails fast.
-
-### Already done
-- [x] Pin/peripheral conflict resolution — `_check_pins()` pin→owner map (`:367`), non-pin hardware conflicts `CONFLICTS_HARD` (`:78`)
-- [x] Rate-monotonic priority assignment (`:395`) + schedulability gate (`:329`)
-- [x] Memory/flash budgeting — per-`.o` non-LTO budget + LTO image gate, real `avr-size`, pre-flash `report()` (`:726`, `:968`)
-- [x] Per-`.o` compile → link Makefile strategy (`:703`–`:756`)
-- [x] Project YAML single source of truth; headless CLI/CI (`--check`, `test_erosgen.py`)
-- [x] ASW→task binding via `simulink.rate_map`
-
-### Genuinely missing (the real work)
-- [ ] **MCU abstraction** — 328P hardcoded across ~6 tables + emitters
-- [ ] **Model-interface parsing** — tool never reads Simulink `.h` for signals/calibrations
-- [ ] **RTE generation** — `rte/Rte_Cfg.h:15` already names this as the next step
-- [ ] **GUI** — and the core must stop failing fast first
-
-## Direction (CONFIRMED by two peer reviews)
-Build **Phase 0 + Phase 1 headless first**. GUI before non-throwing `validate.py`
-and `parse/ert.py` = a crash-prone wrapper. The `[Diagnostic]` array is exactly
-the data structure the GUI's "Problems" tree will render later.
-
-## Python tooling & dependencies (uv)
-
-`uv` (0.9.28 present) is the standard for this project's Python env — replaces the
-README's `pip install pyyaml`. `pyproject.toml` + `uv.lock` become the source of
-truth for deps; land them in Phase 0 alongside the package split.
-
-- [x] `pyproject.toml` (`requires-python >=3.9`, core=`pyyaml`, extras `[mat]`/`[gui]`, dev `pytest`, `package=false`) + `uv.lock` created
-- [x] `.python-version` = 3.12 (uv resolved system CPython 3.12.3; env has pyyaml+pytest)
-- Workflow: `uv sync` · `uv run python -m erosgen.cli app.yaml` · `uv run pytest` · `uv add <dep>`
-
-**Dependency matrix — keep core PyYAML-only; everything else is an opt-in extra:**
-
-| Group | Deps | When |
-|---|---|---|
-| core (runtime) | `pyyaml` | always (erosgen today) |
-| `[mat]` extra | `scipy` (+`h5py` guard) | Phase 1, **only if** pulling scaling/dims from `codeInfo.mat`; header regex needs no deps |
-| `[gui]` extra | `PySide6`, `ruamel.yaml` | Phase 3 (GUI + comment-preserving YAML round-trip) |
-| `[dev]` | `pytest` | optional; `test_erosgen.py` also runs standalone |
-
-**uv stays a *dev* tool — do NOT leak it into generated artifacts.** The emitted
-Makefile's `config:` target must stay plain `python3 ../tools/erosgen.py app.yaml`,
-not `uv run`: (1) preserves byte-exact Makefile golden, (2) keeps the
-"Python-less/uv-less CI can still `make` from committed output" property.
-
-## Target architecture
-
-New value is only 3 files (`parse/ert.py`, `bind.py`, `emit/rte.py`); the rest is
-refactor/externalize.
+The engine is a Python package (`tools/erosgen/`) with a thin shim entrypoint
+(`tools/erosgen.py`). Logic is decoupled from I/O along a clean spine —
+**model → validate → parse → bind → emit** — with a `Diagnostics` sink that
+serves both the fail-fast CLI and the collect-mode GUI:
 
 ```
-tools/erosgen.py    # KEEP as shim entrypoint (see relpath hazard) -> re-exports package
 tools/erosgen/
-  cli.py            # today's main() + --check
-  model.py          # Task/Resource/System — construction only, no validation
-  validate.py       # NEW collect_diagnostics(System) -> [Diagnostic] (non-throwing)
-  diagnostics.py    # NEW Diagnostic dataclass
-  mcu/{profile.py, atmega328p.yaml, atmega2560.yaml}
-  parse/ert.py      # NEW header regex primary + codeInfo.mat cross-check
-  bind.py           # NEW signal<->peripheral type/range compatibility
-  emit/{config,makefile,skeletons,osgen}.py
-  emit/rte.py       # NEW Rte_Cfg.h + Rte.c from a models: section
-  backends/avr.py   # DDRx/PORTx, PROGMEM, avr-gcc idioms
-gui/                # separate; imports tools.erosgen; ZERO logic
+  cli.py            main() + --check; write() overwrite policy
+  model.py          Task/Resource/System + validation gates
+  validate.py       ALLOWED_KEYS shape check + normalize_pin
+  diagnostics.py    Diagnostic dataclass + strict/collect sink
+  parse/ert.py      Embedded Coder header regex (signals/calibrations)
+  bind.py           DriverSpec (adc/dio/pwm) + check_binding
+  models.py, asw.py resolve SWCs (codegen models + hand ASW tasks)
+  emit/             config, makefile, osgen, skeletons, asw, rte
+  backends/avr.py   DDRx/PORTx, PROGMEM idioms
+  mcu/{profile.py, atmega328p.yaml, atmega2560.yaml, arduino_uno.yaml}
+gui/                PySide6 configurator over the engine (project.py + main_window.py)
 ```
 
-`Diagnostic` shape (UI-agnostic but UI-friendly — from peer review):
-```python
-@dataclass
-class Diagnostic:
-    severity: str   # "error" | "warning" | "info"
-    code: str       # machine-readable, e.g. "PIN_CONFLICT", "MEM_OVERFLOW" (assert on this in tests, not message text)
-    message: str    # "Pin PB5 claimed by peripheral spi and gpio LED"
-    location: str   # "app.yaml:tasks[1]" / "appKnbSwt_Intfc.h:26" — lets the GUI jump to source
-```
-
-## Roadmap
-
-### Phase 0 — Refactor, no new features (de-risks everything)
-- [x] Scaffold uv: `pyproject.toml` + `uv.lock` + `.python-version`; `.gitignore` += `.venv/`
-- [x] **Extend the golden-master net BEFORE splitting** — added `test_demos_makefile_golden` (reference-demo Makefile) + `test_genmain_skeleton_goldens` via `tools/fixtures/genmain/` (app.yaml + regen.py + 3 `.golden`). **All 6 emitters now pinned; 8/8 tests green** (`uv run pytest` + standalone).
-- [x] Split `erosgen.py` into `tools/erosgen/` (errors/constants/paths/mcu/validate/model/emit/*/report/cli); `tools/erosgen.py` kept as shim (package shadows the module for `import erosgen`). `emit_makefile` now uses `paths.ENTRYPOINT` not `__file__` → Makefile byte-identical. Verified: 8/8 golden + zero git drift on a full reference-demo regen + exact CI cmd green.
-- [x] `Diagnostic` dataclass + `Diagnostics` sink (strict raises / collect accumulates) + `collect_diagnostics()` (never raises). Sink threaded through model/validate with per-check codes + locations + collect-mode guards. cli keeps strict fail-fast (exits on first error); GUI path gets all diagnostics at once. 10/10 tests, byte-identical emitters, zero drift.
-- [x] Externalize 328P tables into `mcu/atmega328p.yaml` behind `mcu/profile.py` (`MCUProfile.load`/`load_profile`); `mcu/__init__.py` loads the default profile and re-exposes `KNOWN_PERIPHERALS`/`PERIPHERAL_PINS`/`CONFLICTS_HARD`/`DRIVER_INIT`/`DRIVER_HEADER` so consumers are untouched. Profile tables verified equal to the originals (values + order). _Deferred to Phase 2: `NANO_ALIASES`, valid-ports, MCU/F_CPU/avrdude strings, and threading an `MCUProfile` object (needed for atmega2560)._
-- [x] **Gate:** all golden tests byte-identical ✅ — 11/11 (`uv run pytest` + `python3 tools/test_erosgen.py`), zero reference-demo drift at every step.
-
-**Phase 0 complete.** Next: Phase 1 (RTE + model parsing) or Phase 2 (`atmega2560.yaml`).
-
-### Phase 1 — RTE + model parsing, headless (highest value/effort)
-- [x] `parse/ert.py` — signals (`IN_`/`OUT_`, ctype, dim) + calibrations (extern/define) + entry points, dependency-free regex on the ExportToFile surface. Tested vs the real `codegen/appKnbSwt_ert_rtw/`.
-- [x] `bind.py` — `DriverSpec` (adc/dio/pwm) + `check_binding()` (direction, required keys, value-range fit) via the sink: `TYPE_TOO_NARROW`, `DRIVER_DIRECTION`, `RANGE_TRUNCATION`, ...
-- [x] `models.py` + `emit/rte.py` — resolve an `app.yaml models:` block (parse ERT × bind ports) → `Rte_Cfg.h` + `Rte.c` for adc(in)/dio(in,out), mirroring the hand-written `rte/` template. Golden-tested via `fixtures/model_rte/`.
-- [x] **End-to-end**: `erosgen app.yaml` with `models:` emits `Rte.h/Rte_Cfg.h/Rte.c` next to `config.*`, synthesizes the model as a periodic OS task (`TASK_/ALARM_<model>`), and the Makefile builds `Rte.c` + model sources + bound drivers. os_gen calls `Rte_Init`; the alarm activates `Task_<model>` (Rte_Run + TerminateTask, which also satisfies the watchdog). Full app pinned by `fixtures/model_app/` golden (15/15); **new CI job regenerates (no-drift) + builds it `-Werror`**.
-- **Verified locally:** generation, goldens, zero drift (reference-demo/genmain/model_rte), Python tests, runtime logic trace, `-Werror` cleanliness by inspection. **NOT verified locally:** the avr-gcc compile itself (no local toolchain) — the new CI gate is the proof; must push to run it.
-- **Follow-ups:** [x] pwm emit adapter (+ fixed `bind.py`'s wrong pwm spec: real driver is `PWM_SetDutyPermille(uint16)` 0..1000, no channel). [✗] `codeInfo.mat` cross-check — **abandoned**: the MAT stores the interface as opaque nested `numpy.void` records (names not even recoverable by traversal), confirming it's the proprietary schema; the C header stays authoritative, and appKnbSwt has no scaling anyway. [ ] multi-model RTE — deferred (repo has one model, nothing to verify against). [ ] per-signal `static inline` accessors.
-
-**Phase 1 complete end-to-end** (parse → bind → emit → schedule → build).
-
-### Phase 2 — MCU breadth ✅
-- [x] Threaded `MCUProfile` through the tool: `system.mcu` selects the target (default `atmega328p`); the profile now also holds valid ports, board aliases, and toolchain strings (mmcu/F_CPU/avrdude). `model`, `validate.normalize_pin`, and the makefile/osgen emitters read `s.profile` (module globals removed).
-- [x] `mcu/atmega2560.yaml` — second same-family target (ports A..L, Mega `D13`→`PB7`, PORTE UART, `m2560`/`wiring`). `mega_gpio` fixture proves it: 2560 Makefile + `os_gen.h` driving `PORTL` (2560-only) and `PB7`; `PL7` rejected on 328P, accepted on 2560. 328P byte-identical (17/17, zero drift).
-- Confirmed the standing risk: **ESP32 is still a separate backend** — this proved *same-family* breadth on the AVR backend; ESP32 breaks the emitter idioms and needs a kernel port.
-
-### Phase 3 — PySide6 thin client ✅
-- [x] `gui/` — `ProjectModel` bridge (pure, no Qt) + two-pane `MainWindow` (project tree | live diagnostics table | build console) + `File`/`Help` menus. Zero domain logic; every fact from the engine (`collect_diagnostics`, summaries) and generate = save + run the generator.
-- [x] YAML persistence via `ruamel.yaml` round-trip (comments + key order preserved; flow-map inner spacing may normalize — a ruamel default, not comment loss). `app.yaml` stays the single source of truth.
-- [x] Verified headless with Qt **offscreen**: 5 tests (ProjectModel + MainWindow smoke), plus a rendered screenshot. New CI `gui` job runs the offscreen tests.
-- Run: `uv run --extra gui python -m gui [app.yaml]`.
+Tests: **53 engine** (`tools/test_erosgen.py`) + **37 GUI** (`gui/test_gui.py`);
+328P output is byte-identical throughout (golden fixtures under `tools/fixtures/`).
 
 ---
 
-## Status: Phases 0–3 complete
-17 engine tests + 5 GUI tests; 328P byte-identical throughout; RTE end-to-end + `atmega2560` proven; thin GUI over the engine. **Unverified locally (CI-gated):** the `avr-gcc` compile of the generated `model_app` firmware, and the `gui` CI job's environment (Qt offscreen libs). Deferred follow-ups: `codeInfo.mat` scaling cross-check, pwm RTE adapter, multi-model RTE, GUI editing (currently read/generate).
+## Status — what's shipped (Phases 0–3, complete)
 
-## Parsing strategy (Phase 1) — verified against the real ERT output
-Files probed in `codegen/appKnbSwt_ert_rtw/`:
-- `codedescriptor.dmr` = **SQLite 3 DB (UTF-16LE)**, *not* XML → stdlib `sqlite3`, but proprietary/version-coupled schema. **Skip it.**
-- `codeInfo.mat` = **MAT v5** → `scipy.io.loadmat` works (guard v7.3/HDF5 → needs `h5py`).
+Compressed ledger; detail lives in git history. **Do not re-plan these.**
 
-**Each source owns the facts it actually contains:**
-1. **Topology (names, C types, direction, array dims): parse the constrained
-   `_Intfc.h`/`_Param.h` with regex** — zero deps, it *is* the compilation
-   contract, and the ExportToFile/Define storage-class convention keeps the
-   surface to a few `extern <type> <NAME>;` lines (`appKnbSwt_Intfc.h:26`).
-   Extend regex for `[N]` array dimensions.
-2. **Semantic metadata NOT in C (scaling slope/offset, min/max, units): the header
-   physically can't carry it** → take from `codeInfo.mat` (scipy, `[mat]` extra)
-   or from explicit `app.yaml`. Only pull this in when `bind.py` scaling needs it.
-3. Cross-check names/types between (1) and (2); **fail loudly** if the model
-   violates the storage-class convention (point the error at a to-be-written
-   `README_ASW.md` documenting the required storage classes + `IN_`/`OUT_` naming).
-4. **Never** run a general C frontend (pycparser/clang) on raw `_ert_rtw` output.
+- **Refactor spine** — `erosgen.py` split into the package above; `Diagnostic`
+  dataclass + strict/collect sink; golden-master net (`reference-demo`,
+  `genmain`, `model_rte`, `model_app`, `mega_gpio`, `asw_task`, `model_multi`).
+- **RTE end-to-end** — `parse/ert.py` (regex on the ExportToFile surface) →
+  `bind.py` (adc/dio/pwm, direction + range checks) → `emit/rte.py`
+  (`Rte.h`/`Rte_Cfg.h`/`Rte.c`); a `models:` SWC is synthesized as a periodic OS
+  task/alarm and the Makefile builds it. Golden + `-Werror` CI build.
+- **Multi-model RTE** — DONE (was "deferred"): `fixtures/model_multi/` runs two
+  SWCs (`appKnbSwt`+`motor`) with per-SWC namespaced defines
+  (`RTE_CFG_APPKNBSWT_*` / `RTE_CFG_MOTOR_*`); wired via `_models`/`_id_name`
+  multi flag and covered by `test_erosgen.py`.
+- **Hand-authored ASW tasks** — author a runnable interface (ports/calibrations)
+  in `app.yaml` instead of parsing Embedded Coder; emits `<name>{,_Intfc,_Param}`
+  and wires ports through the RTE like a codegen SWC. `fixtures/asw_task/`.
+- **ASW↔ASW internal signals** — one SWC's output feeds another's input
+  (`port.source: "<SWC>.<OUT>"`); validated + RTE-routed.
+- **MCU breadth (same family)** — `MCUProfile` threaded through the tool;
+  `system.mcu` selects target; `atmega2560.yaml` + `arduino_uno.yaml` added;
+  `mega_gpio` fixture proves 2560 (PORTL, PB7). ESP32 remains a separate backend.
+- **GUI is now an editor, not read-only** (was "deferred"): master-detail
+  configurator with in-place editing — Add/Remove Task, Add Codegen Task, Add
+  Resource, resource editor, hand-ASW-task authoring, within-rate priority
+  dropdown; **Peripherals section** to activate + configure PWM/UART/SPI/ADC/
+  I2C/Timer0; **conflict-aware pin/channel pickers** (a clash can't be picked);
+  MCU/board retarget live; `ruamel.yaml` round-trip preserves comments.
+  Verified headless via Qt offscreen.
+- **pwm RTE adapter** — DONE. **`codeInfo.mat` cross-check** — ABANDONED (opaque
+  proprietary schema; the C header stays authoritative).
 
-## Risks / decisions to remember
-- **Scaling boundary (`bind.py`):** do NOT silently synthesize `Y=mX+c` in `Rte.c`.
-  Contract: default = ASW consumes **raw integer ticks** (scaling lives in Simulink,
-  as `IN_KnbVal_Z` already does per `Rte_Cfg.h:33`); opt-in = `app.yaml` declares
-  explicit slope/offset → deterministic, audit-friendly generated conversion.
-- **Schedulability — the peer suggestion to use Liu & Layland `U≤n(2^{1/n}-1)` or the
-  standard RTA recurrence is WRONG for this kernel.** Those model *preemptive*
-  fixed-priority; EROS's documented model is **non-preemptive run-to-completion**
-  (`:329`, `codegen/README §4`), so the sound relaxation would be non-preemptive
-  RTA *with a blocking term* `B_i = max C of lower-prio tasks`. Keep the simple
-  `ΣC ≤ T_base` sum gate — conservative is a *feature* on an 8-task AVR. Do store
-  `T_i` and `C_i` per task in the model (cheap) to keep future RTA an option.
+---
+
+## Phase 4 — Documentation sync — **DO THIS FIRST**
+
+**Why first:** an external review built from `webfetch` of this repo got ~40% of
+its "gaps" wrong — it read the docs, and the docs describe a repo ~15 commits
+stale. Stale docs are actively misleading downstream readers and tools. Fix the
+source of truth before adding features.
+
+- [ ] **`todo.md` line-number rot** — the old file cited `:157`–`:1013` line refs
+      into the pre-split monolith. This rewrite drops them; keep it that way
+      (reference symbols/files, not line numbers, which drift).
+- [ ] **`gui/README.md` is stale** — "What it does" lists only File/Edit
+      (Add Task · Remove) / Model menus and claims a read-only project tree.
+      Update to the shipped GUI: Edit menu (Add Task, Add **Codegen** Task, Add
+      **Resource**, Remove Selected), the **Peripherals** tree section
+      (activate + configure, ● = active), conflict-aware pin/channel pickers,
+      resource + hand-ASW-task editors, live retarget. Re-check the "zero domain
+      logic" claim now that peripheral forms exist (still engine-backed? state it).
+- [ ] **`README.md` GUI blurb** (layout section) — mention the peripheral
+      configuration forms + conflict-aware pinning, not just "bind model ports".
+- [ ] **Kill the "deferred" claims everywhere** — multi-model RTE, pwm RTE
+      adapter, and GUI editing are DONE; remove them from any "deferred /
+      follow-ups" list in `todo.md`, `README.md`, `rte/README.md`, `tools/README.md`.
+- [ ] **Add a "generation & overwrite policy" doc** — the single most important
+      undocumented behavior (see Phase 5): which files are regenerated every run
+      vs written once. Users must know `config.*`/`Makefile`/`os_gen.h`/`Rte.*`
+      are overwritten and `main.c`/`asw_*.c` are once-only. Put it in
+      `tools/README.md` and reference it from `README.md`.
+- [ ] **Docs-drift guard (optional, cheap)** — a CI check or test that asserts a
+      few load-bearing doc facts against code (e.g. the peripheral list in
+      `gui/README.md` ⊆ `validate.ALLOWED_KEYS`, the overwrite table matches
+      `cli.py`). Prevents the next fetch-based review from being wrong.
+
+---
+
+## Genuinely-open gaps (phased plan)
+
+Ordered by value ÷ risk. Every phase must keep the golden tests byte-identical
+(extend goldens as needed) — that gate is the project's safety net.
+
+### Phase 5 — Protected-region merge — **the one critical, verified gap**
+The overwrite policy is strictly binary (`cli.write()`: `wrote` if regenerated,
+`kept` if a "once" file already exists). There are **0 `USER CODE` markers** in
+the repo: once `main.c` / `asw_*.c` exist they are frozen, so any structural
+change after first generation (new task, new peripheral, changed alarm geometry)
+silently strands the user-owned skeletons while `config.*`/`os_gen.h` move on.
+The `os_gen.h` "regenerate only if `main.c` still references it" hack is a
+workaround for exactly this.
+
+- [ ] Emit paired `/* USER CODE BEGIN <id> */` … `/* USER CODE END <id> */`
+      markers in all user-facing files (`main.c`, `asw_*.c`, hand-ASW bodies),
+      with **stable IDs derived from the YAML element** (e.g. `TASK_BUTTON_BODY`)
+      so renames carry user code by ID, not line number.
+- [ ] `merge.py`: three-way merge — parse the current on-disk file for
+      `BEGIN/END` block contents, emit the fresh skeleton with the same IDs,
+      re-inject captured user code into matching regions.
+- [ ] Diagnostics: `ORPHAN_USER_BLOCK` (warning) when a marker no longer maps to
+      any YAML element, so the user can relocate the code instead of losing it.
+- [ ] Golden tests for re-injection (edit-in-a-region → regen → edit preserved).
+- **Risk:** low, additive; touches `cli.write()` + the skeleton emitters only.
+
+### Phase 6 — Meta-model / schema-driven validation
+Validation is code-driven: `validate.ALLOWED_KEYS` (a dict) + hand-coded checks
+emitting string codes (`UNKNOWN_KEY`, `PIN_CONFLICT`, `TICK_HZ`, …). Adding a
+peripheral means editing `validate.py` + `model.py` + an emitter.
+
+- [ ] Externalize the config contract into a versioned JSON Schema (draft
+      2020-12) per `app.yaml` version; validate with `jsonschema` (a `[dev]` or
+      `[schema]` extra — keep core PyYAML-only).
+- [ ] Migrate the existing checks to schema constraints attached to schema paths;
+      the `Diagnostics` sink stays the reporting channel (it was designed for this).
+- [ ] Goal: adding a peripheral = a schema edit, and the GUI renders constraint
+      violations from the same rule set the CLI uses.
+- **Risk:** low, additive; the sink already carries codes + locations.
+
+### Phase 7 — BSW/MCAL layering
+`drivers/` is flat (`adc/eeprom/i2c/spi/timer0_pwm/…`) with no MCAL/Services
+stratification and no standardized module interface.
+
+- [ ] Restructure toward the AUTOSAR topology: MCAL (Dio/Adc/Pwm/Gpt/Icu/Spi/
+      Port), Services (EcuM-like startup, Dem-like error sink, Com-like IPC over
+      the existing mailbox+pool), ComplexDeviceDriver (uart/watchdog).
+- [ ] Standardized interface per module: `<Mod>_Init` / `<Mod>_MainFunction_<rate>ms`
+      wired to the matching OS task by the generator; update `bind.py` `DriverSpec`
+      strings (`ADC_Read/ADC_Init` → `Adc_ReadGroup/Adc_Init`).
+- **Risk:** medium — renames break goldens; needs a coordinated regen. Do after
+      Phase 5 so user code survives the churn.
+
+### Phase 8 — RTE maturity (residuals; multi-model already done)
+- [ ] Contract phase: emit per-SWC `Rte_<SWC>.h` application headers (compile a
+      SWC before the full system is configured).
+- [ ] Queued sender-receiver for rate transitions — today `asw_signals.c` is a
+      hand-written rate-transition layer; the RTE should generate it.
+- [ ] Mode management (`Rte_Mode`/`Rte_Switch`) — fits the existing chained
+      `TASK_STATUS`/`TASK_REPORT` pattern.
+- [ ] Explicit runnable-to-task mapping so one SWC's multiple runnables can map
+      to different rates (today one task = one rate).
+- [ ] `emit/rte.py` currently `#error`s any driver beyond adc/dio/pwm — extend
+      coverage as new bindings land.
+
+### Phase 9 — Graphical pinout view (residual GUI gap)
+Conflict-aware pin/channel **dropdowns** exist; the CubeMX-style visual **pin-map
+grid** does not.
+- [ ] Render the MCU pins (from `mcu/*.yaml` `PERIPHERAL_PINS`/aliases) as a
+      clickable grid; selecting a peripheral auto-binds and highlights conflicts
+      live via the existing pin→owner check. Read-only clock-tree note (Timer2
+      /64, OCR2A=249) to document the fixed 1 kHz tick invariant.
+
+### Phase 10 — Backend protocol + ESP32
+`backends/avr.py` isolates AVR idioms. Generalize to a `Backend` protocol
+(`pin_init/read/write`, `progmem`, `toolchain`) so `esp32.py`/`cortex_m.py`
+become siblings.
+- [ ] `Backend` protocol; emitters read it instead of importing `backends.avr`.
+- [ ] `backends/esp32.py` — the cheap part; **the kernel port (AVR-asm context
+      switch, no PROGMEM, xtensa toolchain) is the real cost** and stays a
+      separate porting project.
+
+### Phase 11 — ASW parser robustness + interchange
+Regex parser is tied to the ExportToFile/Define storage-class contract.
+- [ ] Tier A: `pycparser`-backed fallback (`[parse]` extra) for headers that
+      don't follow the contract — keeps the data model unchanged.
+- [ ] Tier B: accept a hand-authored `swc.yaml` (ports/types/runnables) as a
+      first-class alternative to the Embedded Coder round-trip.
+- [ ] Tier C (aspirational): import ARXML SWC descriptions; source scaling from
+      `SwDataDefProps` (min/max/offset/slope) instead of the abandoned `.mat`.
+
+### Phase 12 — Toolchain/project gen + calibration (low priority)
+- [ ] `emit/` also produces `CMakeLists.txt`, VSCode `tasks.json`/
+      `c_cpp_properties.json`, and `compile_commands.json` from the per-`.o` rule.
+- [ ] `emit/a2l.py` (ASAP2/A2L from the `Calibration`/`Signal` dataclasses) + a
+      minimal XCP-on-UART slave over the existing console, for on-target tuning.
+
+---
+
+## Reference: durable design constraints (keep — not tasks)
+
+- **Scaling boundary (`bind.py`):** do NOT silently synthesize `Y=mX+c`.
+  Default = ASW consumes **raw integer ticks** (scaling lives in Simulink);
+  opt-in = `app.yaml` declares explicit slope/offset → deterministic, auditable
+  generated conversion.
+- **Schedulability:** keep the simple `ΣC ≤ T_base` sum gate. Liu & Layland /
+  RTA recurrence model *preemptive* fixed-priority and are **wrong** for this
+  **non-preemptive run-to-completion** kernel; the sound relaxation would be
+  non-preemptive RTA with a blocking term `B_i = max C of lower-prio tasks`.
+  Conservative is a *feature* on an 8-task AVR. Store `T_i`/`C_i` per task to
+  keep future RTA an option.
 - **ESP32 is a second backend, not a YAML entry** — breaks the emitter layer
-  (`gpio_set_direction` not `DDRB|=`, no PROGMEM, xtensa toolchain) *and* the kernel
-  (AVR-asm context switch). 328P→2560 cheap; 328P→ESP32 = separate porting project.
-- **relpath hazard:** the generated Makefile embeds `python3 ../tools/erosgen.py app.yaml`
-  (relpath app_dir→entrypoint, `:762`). Moving the entrypoint changes that string and
-  breaks the Makefile golden → keep the `tools/erosgen.py` shim.
-- **YAML round-trip destroys comments** — `app.yaml` is densely commented; `safe_dump`
-  strips them. GUI save uses `ruamel.yaml`. Never clobber "once" files (`write(overwrite=False)`, `:1004`).
-- **Drop "estimate footprint from .c"** — meaningless under `-Os`+LTO. Keep per-`.o`
-  `avr-size`; pre-build bar is "estimated (non-LTO)", over-counts vs LTO image (two gates, `app.yaml:14`).
-- **No AVR toolchain on this machine** — parse/validate/generate work without it;
-  only build/size need it. GUI must degrade gracefully.
+  *and* the kernel (see Phase 10).
+- **relpath hazard:** the generated Makefile embeds
+  `python3 ../tools/erosgen.py app.yaml` (relpath app_dir→entrypoint). Moving the
+  entrypoint changes that string and breaks the Makefile golden → keep the
+  `tools/erosgen.py` shim. **uv stays a dev tool** — never leak `uv run` into the
+  generated Makefile's `config:` target (preserves the byte-exact golden and the
+  "Python-less CI can still `make` from committed output" property).
+- **YAML round-trip destroys comments** with `safe_dump` — GUI save uses
+  `ruamel.yaml`. Never clobber "once" files (`write(overwrite=False)`).
+- **Footprint from `.c` is meaningless** under `-Os`+LTO — keep per-`.o`
+  `avr-size` (two gates: non-LTO `budget`, LTO-image `size`).
+- **No AVR toolchain guaranteed on the dev machine** — parse/validate/generate
+  work without it; only build/size need it; the GUI degrades gracefully. The
+  `avr-gcc` compile of generated firmware is CI-gated.
+
+## Dependencies (uv) — keep core PyYAML-only
+
+| Group | Deps | When |
+|---|---|---|
+| core | `pyyaml` | always |
+| `[gui]` | `PySide6`, `ruamel.yaml` | GUI + comment-preserving round-trip |
+| `[dev]` | `pytest` | tests (also run standalone) |
+| `[schema]` (planned) | `jsonschema` | Phase 6 |
+| `[parse]` (planned) | `pycparser` | Phase 11 Tier A |
+
+Workflow: `uv sync` · `uv run python -m erosgen.cli app.yaml` · `uv run pytest` ·
+GUI: `uv run --extra gui python -m gui [app.yaml]`.
