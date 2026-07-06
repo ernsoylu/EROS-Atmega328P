@@ -441,6 +441,23 @@ def test_projectmodel_conflict_aware_pins():
     assert 0 in p.available_adc_channels("T", "IN_x")     # its own channel kept
 
 
+def test_mainwindow_spi_config_page():
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QComboBox
+    _app()
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    p.activate_peripheral("spi", True)
+    w = MainWindow(p)
+    w._sel = ("peripheral", "spi")
+    w._show_inspector()
+    assert len(w.inspector.widget().findChildren(QComboBox)) >= 2  # mode + clock
+    w._set_peripheral_prop("spi", "mode", 2)
+    w._set_peripheral_prop("spi", "clock", 8)
+    assert p.peripheral_config("spi") == {"mode": 2, "clock": 8}
+    w.close()
+
+
 def test_mainwindow_peripherals_page():
     from gui.main_window import MainWindow
     from PySide6.QtWidgets import QSpinBox

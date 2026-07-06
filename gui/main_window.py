@@ -624,6 +624,8 @@ class MainWindow(QMainWindow):
                 lay.addWidget(self._pwm_config_group(cfg))
             elif name == "uart":
                 lay.addWidget(self._uart_config_group(cfg))
+            elif name == "spi":
+                lay.addWidget(self._spi_config_group(cfg))
             else:
                 lay.addWidget(QLabel("No configurable properties yet — it's "
                                      "compiled in and ready to call."))
@@ -676,6 +678,32 @@ class MainWindow(QMainWindow):
             self.project.set_peripheral_prop("uart", "baud", int(baud.currentText()))
             for key, box in rings.items():
                 self.project.set_peripheral_prop("uart", key, int(box.currentText()))
+            self._defer_refresh()
+        apply.clicked.connect(commit)
+        form.addRow(apply)
+        return gb
+
+    def _spi_config_group(self, cfg):
+        gb = QGroupBox("SPI (master)")
+        form = QFormLayout(gb)
+        mode = QComboBox()
+        for m in range(4):
+            mode.addItem(f"mode {m}", m)
+        mode.setCurrentIndex(int(cfg.get("mode", 0)))
+        form.addRow("mode", mode)
+        clock = QComboBox()
+        # divider -> approximate SCK at 16 MHz, most-common (/16 = 1 MHz) default
+        for div, hz in ((2, "8 MHz"), (4, "4 MHz"), (8, "2 MHz"), (16, "1 MHz"),
+                        (32, "500 kHz"), (64, "250 kHz"), (128, "125 kHz")):
+            clock.addItem(f"/{div}  (~{hz})", div)
+        ci = clock.findData(int(cfg.get("clock", 16)))
+        clock.setCurrentIndex(ci if ci >= 0 else 3)
+        form.addRow("clock", clock)
+        apply = QPushButton("Apply SPI")
+
+        def commit():
+            self.project.set_peripheral_prop("spi", "mode", mode.currentData())
+            self.project.set_peripheral_prop("spi", "clock", clock.currentData())
             self._defer_refresh()
         apply.clicked.connect(commit)
         form.addRow(apply)

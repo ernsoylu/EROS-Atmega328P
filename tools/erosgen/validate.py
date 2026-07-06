@@ -33,6 +33,7 @@ ALLOWED_KEYS = {
     "simulink":   {"model", "dir", "rate_map"},
     "uart":       {"baud", "tx_ring", "rx_ring"},
     "pwm":        {"freq_hz"},   # Timer1 fast-PWM; erosgen picks prescaler + TOP
+    "spi":        {"mode", "clock"},   # SPI_Init(SPI_MODE<mode>, SPI_CLK_DIV<clock>)
     # RTE generation from a Simulink SWC (see rte/README.md, models: schema).
     "model":      {"name", "codegen_dir", "init", "runnable", "rate_ms",
                    "wcet_ms", "ports", "order"},
