@@ -338,6 +338,58 @@ def test_mainwindow_add_port_preserves_edits():
     w.close()
 
 
+def test_projectmodel_internal_signal_wiring():
+    p = ProjectModel()
+    p.new("d", "atmega328p")
+    p.add_task("App1", period_ms=10)
+    p.make_asw_task("App1")
+    p.add_port("App1", "out", "OUT_A1_B", "boolean_T", "")
+    p.bind_port("App1", "OUT_A1_B", "internal")
+    p.add_task("App2", period_ms=10)
+    p.make_asw_task("App2")
+    p.add_port("App2", "in", "IN_A2_B", "boolean_T", "")
+    # App2's input can source App1's output (another SWC's output)
+    assert "App1.OUT_A1_B" in p.available_sources("App2")
+    assert "App2.IN_A2_B" not in p.available_sources("App2")   # not its own/inputs
+    p.set_port_source("App2", "IN_A2_B", "App1.OUT_A1_B")
+    assert p.port_binding("App2", "IN_A2_B") == "← App1.OUT_A1_B"
+    assert p.port_binding("App1", "OUT_A1_B") == "internal"
+    # re-binding to a driver clears the source
+    p.bind_port("App2", "IN_A2_B", "dio", port="C", bit=0)
+    assert p.port_binding("App2", "IN_A2_B") == "dio port=C bit=0"
+
+
+def test_mainwindow_input_offers_and_wires_internal_source():
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QTableWidget
+    _app()
+    p = ProjectModel()
+    p.new("d", "atmega328p")
+    p.add_task("App1", period_ms=10)
+    p.make_asw_task("App1")
+    p.add_port("App1", "out", "OUT_A1_B", "boolean_T", "")
+    p.bind_port("App1", "OUT_A1_B", "internal")
+    p.add_task("App2", period_ms=10)
+    p.make_asw_task("App2")
+    p.add_port("App2", "in", "IN_A2_B", "boolean_T", "")
+    w = MainWindow(p)
+    w._sel = ("asw", "App2")
+    w._show_inspector()
+    table = w.inspector.widget().findChild(QTableWidget)
+    combo = table.cellWidget(0, 3)                 # driver combo for IN_A2_B
+    labels = {combo.itemText(i) for i in range(combo.count())}
+    assert "← App1.OUT_A1_B" in labels             # the internal source is offered
+    combo.setCurrentText("← App1.OUT_A1_B")
+    w._apply_task()
+    assert p.port_binding("App2", "IN_A2_B") == "← App1.OUT_A1_B"
+    # reopening the page must preselect the wired source (str item data so
+    # QComboBox.findData matches - a tuple would silently fall back to unbound)
+    w._show_inspector()
+    table2 = w.inspector.widget().findChild(QTableWidget)
+    assert table2.cellWidget(0, 3).currentText() == "← App1.OUT_A1_B"
+    w.close()
+
+
 def test_mainwindow_excepthook_logs_and_survives():
     # An unhandled slot exception must be logged to the Console (and the app
     # kept alive) rather than terminating PySide6 (>=6.5 aborts by default).

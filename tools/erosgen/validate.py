@@ -38,8 +38,10 @@ ALLOWED_KEYS = {
     "ports":      {"in", "out"},
     # `type`/`description` are only read for hand-authored ports (a codegen
     # model parses the type from its C header); harmless (optional) on a model.
+    # `source` wires an input to another SWC's output (ASW->ASW internal signal)
+    # instead of a hardware driver: "<SWC>.<OUT_signal>".
     "port":       {"signal", "driver", "channel", "port", "bit",
-                   "slope", "offset", "type", "description"},
+                   "slope", "offset", "type", "description", "source"},
     "calibration": {"name", "type", "value", "description"},
 }
 

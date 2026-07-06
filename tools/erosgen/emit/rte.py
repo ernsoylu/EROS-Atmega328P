@@ -251,20 +251,32 @@ def _rte_init(L, rms, multi):
 
 def _rte_run(L, rm, multi):
     """One model's Rte_Run_<model>: read input ports, run the runnable, write
-    output ports."""
+    output ports. An internal input is copied straight from the producing SWC's
+    output global; an internal-only output has no BSW write (its global is left
+    for a downstream SWC to read)."""
     L.append(f"void Rte_Run_{rm.name}(void)")
     L.append("{")
     if rm.inputs:
-        L.append("    /* implicit read: sensor ports <- BSW */")
+        # keep the historical comment when nothing is internal (goldens), widen
+        # it only when an ASW<->ASW input is present.
+        L.append("    /* implicit read: input ports <- BSW / producer SWCs */"
+                 if any(p.internal for p in rm.inputs)
+                 else "    /* implicit read: sensor ports <- BSW */")
         for port in rm.inputs:
-            L.append(f"    RTE_CFG_{port.tag}_SIGNAL = Rte_Read_{port.stem}();")
+            if port.internal:
+                L.append(f"    RTE_CFG_{port.tag}_SIGNAL = {port.source_signal};"
+                         f"  /* <- {port.source} */")
+            else:
+                L.append(f"    RTE_CFG_{port.tag}_SIGNAL = "
+                         f"Rte_Read_{port.stem}();")
         L.append("")
     L.append("    /* run the ASW runnable */")
     L.append(f"    {_id_name('RUNNABLE_FN', rm, multi)}();")
-    if rm.outputs:
+    hw_outs = [p for p in rm.outputs if not p.internal]
+    if hw_outs:
         L.append("")
         L.append("    /* implicit write: actuator ports -> BSW */")
-        for port in rm.outputs:
+        for port in hw_outs:
             L.append(f"    Rte_Write_{port.stem}(RTE_CFG_{port.tag}_SIGNAL);")
     L.append("}")
 
@@ -321,6 +333,8 @@ def emit_rte_c(models, src_name, integrated=False):
     L.append("/* --- Port adapters (IoHwAb): BSW signals <-> ASW ports ---------- */")
     L.append("")
     for port in all_ports:
+        if port.internal:
+            continue          # ASW<->ASW: copied directly in Rte_Run, no adapter
         L.extend(_adapter(port))
         L.append("")
     L.append("/* --- Lifecycle ------------------------------------------------- */")

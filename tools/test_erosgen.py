@@ -782,6 +782,63 @@ def test_within_rate_order_tiebreak():
     assert pb > pa          # b has the higher order -> the higher priority
 
 
+# --- ASW<->ASW internal signals (one SWC's output feeds another's input) ------
+
+def _swc(name, ins=None, outs=None):
+    ports = {}
+    if ins:
+        ports["in"] = ins
+    if outs:
+        ports["out"] = outs
+    return {"name": name, "period_ms": 10, "wcet_ms": 1, "ports": ports}
+
+
+_A1_OUT = {"signal": "OUT_A1_B", "type": "boolean_T", "driver": "internal"}
+
+
+def test_asw_asw_connection_rte():
+    from erosgen.asw import resolve_asw_task
+    from erosgen.diagnostics import Diagnostics
+    from erosgen.emit.rte import emit_rte_c
+    from erosgen.models import resolve_connections
+    a1 = _swc("App1", outs=[_A1_OUT])
+    a2 = _swc("App2",
+              ins=[{"signal": "IN_A2_B", "type": "boolean_T",
+                    "source": "App1.OUT_A1_B"}],
+              outs=[{"signal": "OUT_Led_B", "type": "boolean_T", "driver": "dio",
+                     "port": "B", "bit": 5}])
+    sink = Diagnostics(strict=False)
+    rms = [resolve_asw_task(a1, sink), resolve_asw_task(a2, sink)]
+    resolve_connections(rms, {"APP1": 5, "APP2": 4}, sink)     # App1 before App2
+    assert [d for d in sink.items if d.severity == "error"] == []
+    assert rms[1].inputs[0].source_signal == "OUT_A1_B"
+    rte = emit_rte_c(rms, "app.yaml", integrated=True)
+    assert "RTE_CFG_A2_B_SIGNAL = OUT_A1_B;" in rte    # internal copy in Rte_Run
+    assert "Rte_Read_A2_B" not in rte                  # no adapter for internal in
+    assert "Rte_Write_A1_B" not in rte                 # no adapter for internal out
+
+
+def test_asw_asw_connection_diagnostics():
+    from erosgen.asw import resolve_asw_task
+    from erosgen.diagnostics import Diagnostics
+    from erosgen.models import resolve_connections
+    a1 = _swc("App1", outs=[_A1_OUT])
+    # a source pointing at a signal App1 doesn't export -> error
+    bad = _swc("App2", ins=[{"signal": "IN_X_B", "type": "boolean_T",
+                             "source": "App1.NOPE"}])
+    sink = Diagnostics(strict=False)
+    resolve_connections([resolve_asw_task(a1, sink), resolve_asw_task(bad, sink)],
+                        {}, sink)
+    assert "CONN_UNKNOWN_SIGNAL" in {d.code for d in sink.items}
+    # producer NOT scheduled before consumer -> ordering warning
+    good = _swc("App2", ins=[{"signal": "IN_A2_B", "type": "boolean_T",
+                              "source": "App1.OUT_A1_B"}])
+    s2 = Diagnostics(strict=False)
+    resolve_connections([resolve_asw_task(a1, s2), resolve_asw_task(good, s2)],
+                        {"APP1": 3, "APP2": 4}, s2)     # App1 lower priority
+    assert "CONN_ORDER" in {d.code for d in s2.items}
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

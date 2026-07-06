@@ -454,7 +454,15 @@ class MainWindow(QMainWindow):
             combo.addItem("(unbound)")
             combo.addItems([d for d in sorted(drivers)
                             if r["direction"] in drivers[d]["directions"]])
-            if r["driver"]:
+            if r["direction"] == "out":
+                combo.addItem("internal")            # ASW<->ASW: exported, no HW
+            for src in (p.available_sources(name)
+                        if r["direction"] == "in" else []):
+                combo.addItem(f"← {src}", f"src:{src}")   # read a producer output
+            if r["source"]:                          # preselect source > driver
+                j = combo.findData(f"src:{r['source']}")   # str data: findData ok
+                combo.setCurrentIndex(j if j >= 0 else 0)
+            elif r["driver"]:
                 k = combo.findText(r["driver"])
                 if k >= 0:
                     combo.setCurrentIndex(k)
@@ -678,11 +686,7 @@ class MainWindow(QMainWindow):
                 self.project.set_port_meta(name, st["signal"],
                                            ctype=st["type"].currentText(),
                                            description=st["desc"].text())
-            drv = st["combo"].currentText()
-            if drv == "(unbound)":
-                self.project.unbind_port(name, st["signal"])
-            else:
-                self.project.bind_port(name, st["signal"], drv, **st["get"]())
+            self._apply_port(name, st)
         for st in page["cals"]:                # calibration type/value/description
             val = st["value"].text().strip()
             self.project.set_calibration(
@@ -753,6 +757,20 @@ class MainWindow(QMainWindow):
         self.project.remove_calibration(name, cal)
         self._defer_refresh()
 
+    def _apply_port(self, name, st):
+        """Commit one interface row's binding: an internal source (← SWC.OUT),
+        an internal-only output, unbound, or a peripheral driver + params."""
+        data = st["combo"].currentData()
+        drv = st["combo"].currentText()
+        if isinstance(data, str) and data.startswith("src:"):
+            self.project.set_port_source(name, st["signal"], data[len("src:"):])
+        elif drv == "(unbound)":
+            self.project.unbind_port(name, st["signal"])
+        elif drv == "internal":
+            self.project.bind_port(name, st["signal"], "internal")
+        else:
+            self.project.bind_port(name, st["signal"], drv, **st["get"]())
+
     def _apply_model(self):
         page = getattr(self, "_model_page", None)
         if not page:
@@ -760,11 +778,7 @@ class MainWindow(QMainWindow):
         mname = page["name"]
         self.project.set_model_rate(mname, page["rate"].value())
         for st in page["states"]:
-            drv = st["combo"].currentText()
-            if drv == "(unbound)":
-                self.project.unbind_port(mname, st["signal"])
-            else:
-                self.project.bind_port(mname, st["signal"], drv, **st["get"]())
+            self._apply_port(mname, st)
         self._log(f"applied bindings for {mname}")
         self._defer_refresh()
 

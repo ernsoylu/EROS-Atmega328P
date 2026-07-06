@@ -36,7 +36,7 @@ from .emit import (emit_asw_skeleton, emit_config_c, emit_config_h,
 from .emit.asw import ASW_FILES
 from .errors import ConfigError
 from .model import System
-from .models import resolve_models
+from .models import resolve_connections, resolve_models
 from .report import report
 
 try:
@@ -115,6 +115,9 @@ def main(argv):
         # Rte.h/Rte_Cfg.h/Rte.c (a Task_<name> per SWC); each is already wired as
         # an OS task/alarm in config.* by System.
         rte_rms = (resolve_models(doc, app_dir, rsink) if s.models else []) + asw_rms
+        # Wire ASW<->ASW internal signals (validates targets/order, sets each
+        # consumer port's source_signal the RTE assigns from) before emitting.
+        resolve_connections(rte_rms, {t.name: t.priority for t in s.tasks}, rsink)
         if rte_rms:
             outputs.append((app_dir / "Rte.h", emit_rte_h(rte_rms, src.name), True))
             outputs.append((app_dir / "Rte_Cfg.h",

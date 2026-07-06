@@ -99,14 +99,15 @@ class ProjectModel:
         tasks (resolve_asw_tasks), so unbound/mistyped ports on either show up."""
         from erosgen import Diagnostics
         from erosgen.asw import resolve_asw_tasks
-        from erosgen.models import resolve_models
+        from erosgen.models import resolve_connections, resolve_models
         items = list(erosgen.collect_diagnostics(self.plain,
                                                  self.path or Path("app.yaml")))
         app_dir = self.path.parent if self.path else Path(".")
         msink = Diagnostics(strict=False)
         try:
-            resolve_models(self.plain, app_dir, msink)
-            resolve_asw_tasks(self.plain, msink)
+            rms = (resolve_models(self.plain, app_dir, msink)
+                   + resolve_asw_tasks(self.plain, msink))
+            resolve_connections(rms, self._engine_priorities(), msink)
         except Exception:  # pragma: no cover - binding is best-effort in the GUI
             pass
         seen, merged = set(), []
@@ -193,25 +194,63 @@ class ProjectModel:
 
     def bind_port(self, name, signal, driver, **params):
         """Bind an SWC's port signal to a peripheral driver (+ params). Stale
-        binding params from a previous driver are cleared first, so re-binding
-        adc->pwm can't leave an orphaned 'channel' behind."""
+        binding params/source from a previous binding are cleared first, so
+        re-binding adc->pwm (or source->driver) can't leave an orphan behind."""
         pd = self._port_dict(name, signal)
         if pd is None:
             return False
-        for k in ("channel", "port", "bit", "slope", "offset"):
+        for k in ("channel", "port", "bit", "slope", "offset", "source"):
             pd.pop(k, None)
         pd["driver"] = driver
         pd.update(params)
         return True
 
+    def set_port_source(self, name, signal, source):
+        """Wire an input to another SWC's output (internal ASW<->ASW signal),
+        clearing any hardware driver/params. `source` is '<SWC>.<OUT_signal>'."""
+        pd = self._port_dict(name, signal)
+        if pd is None:
+            return False
+        for k in ("driver", "channel", "port", "bit", "slope", "offset"):
+            pd.pop(k, None)
+        pd["source"] = source
+        return True
+
+    def available_sources(self, consumer):
+        """Internal-signal sources an input can read: every OTHER SWC's output as
+        '<SWC>.<OUT_signal>'. Feeds the input's driver dropdown with ASW<->ASW
+        wiring options."""
+        out = []
+        for e in self._swc_entries():
+            if e.get("name") == consumer:
+                continue
+            for pd in (e.get("ports", {}) or {}).get("out", []) or []:
+                if isinstance(pd, dict) and pd.get("signal"):
+                    out.append(f"{e['name']}.{pd['signal']}")
+        return out
+
+    def _swc_entries(self):
+        """Every SWC dict: models + hand ASW tasks (a task with an interface)."""
+        swcs = [m for m in self.plain.get("models", []) or []
+                if isinstance(m, dict) and m.get("name")]
+        swcs += [t for t in self.plain.get("tasks", []) or []
+                 if isinstance(t, dict) and t.get("name")
+                 and ("ports" in t or "calibrations" in t)]
+        return swcs
+
     def port_binding(self, name, signal):
-        """Human-readable binding for a port ('adc channel=0', 'unbound', ...)."""
+        """Human-readable binding for a port ('adc channel=0', 'unbound', an
+        internal '<- App1.OUT_x' source, ...)."""
         pd = self._port_dict(name, signal)
         if pd is None:
             return ""
+        if pd.get("source"):
+            return f"← {pd['source']}"       # <- internal signal
         drv = pd.get("driver")
         if not drv:
             return "unbound"
+        if drv == "internal":
+            return "internal"
         extra = " ".join(f"{k}={pd[k]}" for k in ("channel", "port", "bit")
                          if k in pd)
         return f"{drv} {extra}".strip()
@@ -491,6 +530,7 @@ class ProjectModel:
                     "signal": sig, "direction": direction,
                     "ctype": ctypes.get(sig) or pd.get("type", "?"),
                     "driver": pd.get("driver"),
+                    "source": pd.get("source"),
                     "params": {k: pd[k] for k in ("channel", "port", "bit")
                                if k in pd},
                     "description": pd.get("description", "")})
@@ -500,7 +540,8 @@ class ProjectModel:
         """Clear a port's binding (back to 'unbound')."""
         pd = self._port_dict(name, signal)
         if pd is not None:
-            for k in ("driver", "channel", "port", "bit", "slope", "offset"):
+            for k in ("driver", "channel", "port", "bit", "slope", "offset",
+                      "source"):
                 pd.pop(k, None)
             return True
         return False

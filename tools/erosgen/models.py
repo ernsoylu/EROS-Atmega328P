@@ -18,11 +18,14 @@ PORT_PARAM_KEYS = ("channel", "port", "bit")
 class BoundPort:
     signal: Signal
     direction: str        # "in" | "out"
-    driver: str
+    driver: str           # adc/dio/pwm, or "internal" (ASW<->ASW, no hardware)
     params: dict
     stem: str             # signal name without IN_/OUT_ (e.g. "KnbVal_Z")
     slope: object = None  # opt-in calibration: port = raw*slope + offset
     offset: object = None  # None slope => pass the raw driver value through
+    source: "str | None" = None  # input only: "<SWC>.<OUT_signal>" it reads from
+    source_signal: "str | None" = None  # resolved producer output C-global (set
+    #                     by resolve_connections); the RHS the RTE assigns from
 
     @property
     def tag(self):        # #define tag, e.g. "KNBVAL_Z"
@@ -31,6 +34,10 @@ class BoundPort:
     @property
     def scaled(self):
         return self.slope is not None
+
+    @property
+    def internal(self):   # ASW<->ASW: no BSW driver, no Rte_Read/Write adapter
+        return self.driver == "internal"
 
 
 @dataclass
@@ -140,8 +147,30 @@ def bind_ports(iface, spec, where, sink):
                            f"'{iface.name}'", pw)
                 continue
             driver = pd.get("driver")
+            source = pd.get("source")
+            # ASW<->ASW internal signal: an input reads another SWC's output
+            # global (resolve_connections validates the target); an output can
+            # be `driver: internal` (no hardware sink, just the exported global).
+            if direction == "in" and source:
+                if driver:
+                    sink.error("PORT_SOURCE_AND_DRIVER",
+                               f"{pw}: has both 'driver' and 'source'", pw)
+                    continue
+                bucket.append(BoundPort(sig, direction, "internal", {},
+                                        _stem(signame), source=source))
+                continue
+            if driver == "internal":
+                if direction != "out":
+                    sink.error("PORT_INTERNAL_INPUT",
+                               f"{pw}: 'driver: internal' is for outputs; an "
+                               "internal input uses 'source'", pw)
+                    continue
+                bucket.append(BoundPort(sig, direction, "internal", {},
+                                        _stem(signame)))
+                continue
             if not driver:
-                sink.error("PORT_NO_DRIVER", f"{pw}: needs a 'driver'", pw)
+                sink.error("PORT_NO_DRIVER",
+                           f"{pw}: needs a 'driver' or 'source'", pw)
                 continue
             params = {k: pd[k] for k in PORT_PARAM_KEYS if k in pd}
             slope, offset = _parse_scaling(pd, driver, pw, sink)
@@ -151,6 +180,49 @@ def bind_ports(iface, spec, where, sink):
                 bucket.append(BoundPort(sig, direction, driver, params,
                                         _stem(signame), slope, offset))
     return inputs, outputs
+
+
+def resolve_connections(resolved, priorities, sink):
+    """Wire ASW<->ASW internal signals across resolved SWCs. Each input port with
+    a `source` ("<SWC>.<OUT_signal>") is matched to a producer output: the target
+    must exist and its type should match, and the producer should be scheduled
+    *before* the consumer (else the consumer reads last cycle's value). Sets
+    port.source_signal (the producer's C global the RTE assigns from).
+    `priorities` is {TASKNAME_UPPER: priority} (higher = runs first); {} skips the
+    ordering check."""
+    by_name = {rm.name: rm for rm in resolved}
+    for rm in resolved:
+        for port in rm.inputs:
+            if not port.source:
+                continue
+            where = f"'{rm.name}' input '{port.signal.name}'"
+            prod_name, _, out_sig = port.source.partition(".")
+            prod = by_name.get(prod_name)
+            if prod is None:
+                sink.error("CONN_UNKNOWN_SWC",
+                           f"{where}: source SWC '{prod_name}' is not a model or "
+                           "ASW task", where)
+                continue
+            out_port = next((p for p in prod.outputs
+                             if p.signal.name == out_sig), None)
+            if out_port is None:
+                sink.error("CONN_UNKNOWN_SIGNAL",
+                           f"{where}: '{prod_name}' has no output '{out_sig}'",
+                           where)
+                continue
+            if (port.signal.ctype and out_port.signal.ctype
+                    and port.signal.ctype != out_port.signal.ctype):
+                sink.warning("CONN_TYPE_MISMATCH",
+                             f"{where}: producer type {out_port.signal.ctype} != "
+                             f"consumer type {port.signal.ctype}", where)
+            port.source_signal = out_port.signal.name
+            pp = priorities.get(prod_name.upper())
+            cp = priorities.get(rm.name.upper())
+            if pp is not None and cp is not None and pp <= cp:
+                sink.warning("CONN_ORDER",
+                             f"{where}: producer '{prod_name}' is not scheduled "
+                             "before the consumer (raise its priority), so the "
+                             "consumer reads last cycle's value", where)
 
 
 def resolve_models(doc, app_dir, sink):
