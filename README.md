@@ -66,7 +66,9 @@ tools/erosgen/        the system configurator (uv/PyYAML): compiles each app's
                       from a `models:` section, and targets any MCU profile
                       (`mcu/*.yaml`: atmega328p, atmega2560) — see tools/README.md
 gui/                  optional PySide6 configurator over the engine: open/create
-                      a project, bind model ports to peripherals, live
+                      a project, edit tasks/resources, activate + configure
+                      peripherals with conflict-aware pin/channel pickers, bind
+                      model ports (to drivers or ASW→ASW signals), live
                       diagnostics + memory budget, generate/build — see gui/README.md
 codegen/              Simulink / Embedded Coder output (ASW): drop
                       <model>_ert_rtw here, kept frozen; README.md
@@ -94,7 +96,10 @@ which peripheral drivers compile, sizes the RAM-dominant buffers (UART
 rings, pool arena), assigns rate-monotonic priorities, and enforces
 schedulability and pin/peripheral-conflict rules — an invalid system
 cannot be generated. The shipped demo regenerates to a byte-identical
-image from its `app.yaml`. See `tools/README.md`.
+image from its `app.yaml`. `config.*`/`Makefile`/`os_gen.h`/`Rte.*` are
+**overwritten every run**; `main.c` and the `asw_<rate>ms.c` skeletons are
+written **once** and then yours to edit — see the **Generation & overwrite
+policy** table in `tools/README.md`.
 
 ## Architecture in one page
 

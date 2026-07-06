@@ -73,26 +73,28 @@ its "gaps" wrong — it read the docs, and the docs describe a repo ~15 commits
 stale. Stale docs are actively misleading downstream readers and tools. Fix the
 source of truth before adding features.
 
-- [ ] **`todo.md` line-number rot** — the old file cited `:157`–`:1013` line refs
+- [x] **`todo.md` line-number rot** — the old file cited `:157`–`:1013` line refs
       into the pre-split monolith. This rewrite drops them; keep it that way
       (reference symbols/files, not line numbers, which drift).
-- [ ] **`gui/README.md` is stale** — "What it does" lists only File/Edit
-      (Add Task · Remove) / Model menus and claims a read-only project tree.
-      Update to the shipped GUI: Edit menu (Add Task, Add **Codegen** Task, Add
-      **Resource**, Remove Selected), the **Peripherals** tree section
-      (activate + configure, ● = active), conflict-aware pin/channel pickers,
-      resource + hand-ASW-task editors, live retarget. Re-check the "zero domain
-      logic" claim now that peripheral forms exist (still engine-backed? state it).
-- [ ] **`README.md` GUI blurb** (layout section) — mention the peripheral
-      configuration forms + conflict-aware pinning, not just "bind model ports".
-- [ ] **Kill the "deferred" claims everywhere** — multi-model RTE, pwm RTE
-      adapter, and GUI editing are DONE; remove them from any "deferred /
-      follow-ups" list in `todo.md`, `README.md`, `rte/README.md`, `tools/README.md`.
-- [ ] **Add a "generation & overwrite policy" doc** — the single most important
-      undocumented behavior (see Phase 5): which files are regenerated every run
-      vs written once. Users must know `config.*`/`Makefile`/`os_gen.h`/`Rte.*`
-      are overwritten and `main.c`/`asw_*.c` are once-only. Put it in
-      `tools/README.md` and reference it from `README.md`.
+- [x] **`gui/README.md` is stale** — rewritten to the shipped GUI: File/Edit
+      (Add Task, Add **Codegen** Task, Add **Resource**, Remove Selected)/Help
+      menus (the Model menu is gone), the **Peripherals** tree section
+      (● active / ○ inactive), conflict-aware pin/channel pickers, resource +
+      hand-ASW-task editors, inline port binding (driver *or* ASW→ASW source),
+      live retarget, 37 tests. The false "signal→signal wiring not included"
+      section is removed (the engine + GUI now support it). "Zero domain logic"
+      restated and confirmed engine-backed (`ProjectModel`).
+- [x] **`README.md` GUI blurb** (layout section) — now mentions peripheral
+      activation/config + conflict-aware pinning and driver/ASW→ASW port binding.
+- [x] **Kill the "deferred" claims everywhere** — done. No stale "deferred /
+      follow-ups" lists remained in `README.md`/`rte/README.md`/`tools/README.md`;
+      the only cross-doc GUI staleness was `rte/README.md`'s "Model menu" (fixed
+      to Edit → Add Codegen Task + inline binding). `todo.md`'s status ledger
+      keeps its "(was deferred)" notes intentionally as history.
+- [x] **Add a "generation & overwrite policy" doc** — `tools/README.md` now has a
+      **Generation & overwrite policy** heading over the overwrite table, and
+      `README.md` points to it and states `config.*`/`Makefile`/`os_gen.h`/`Rte.*`
+      are overwritten while `main.c`/`asw_*.c` are once-only.
 - [ ] **Docs-drift guard (optional, cheap)** — a CI check or test that asserts a
       few load-bearing doc facts against code (e.g. the peripheral list in
       `gui/README.md` ⊆ `validate.ALLOWED_KEYS`, the overwrite table matches

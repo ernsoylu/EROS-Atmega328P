@@ -18,12 +18,12 @@ make config                                # same, from inside a generated app
 ```
 
 **Environment (`uv`).** Deps are managed with [uv]; the core needs only PyYAML,
-with opt-in extras `[gui]` (PySide6, ruamel.yaml) and `[mat]` (scipy):
+with the opt-in extra `[gui]` (PySide6, ruamel.yaml):
 
 ```sh
 uv sync                                     # core env
 uv run python tools/erosgen.py app.yaml     # generate under uv
-uv run pytest tools/test_erosgen.py         # 18 engine tests
+uv run pytest tools/test_erosgen.py         # 53 engine tests
 uv run --extra gui python -m gui [app.yaml] # the PySide6 configurator (gui/)
 ```
 
@@ -51,7 +51,11 @@ Two independent levers, both driven from the YAML:
 The end-of-run report prints the static-RAM plan (kernel, arena, rings)
 so "too much RAM" is a number you see *before* flashing.
 
-## What it generates
+## Generation & overwrite policy
+
+This table is the single source of truth for **which files are regenerated on
+every run and which are written once** — the most load-bearing behavior to know
+before you hand-edit anything in a generated app.
 
 | File | Overwrite? | Contents |
 |---|---|---|

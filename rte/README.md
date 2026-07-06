@@ -135,8 +135,9 @@ unique across models (they share the `RTE_CFG_<TAG>_*` namespace). The
 hand-written `rte/` here stays as the worked reference and the simavr test's
 fixture. Its CI gate compiles a generated `model_app` firmware with
 `avr-gcc -Werror`. Calibration assignment (`ImportFromFile` SWCs) is not
-generated yet. The GUI (`gui/`) exposes this via a **Model** menu — add a
-codegen model and bind its ports to peripherals interactively.
+generated yet. The GUI (`gui/`) exposes this too: **Edit → Add Codegen Task**
+adds the model, then its ports are bound **inline on the model's page** — to a
+driver or to another SWC's output — with conflict-aware pin/channel pickers.
 
 ## Tuning (calibration)
 

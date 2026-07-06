@@ -2,8 +2,9 @@
 
 A thin **PySide6** front-end over the `erosgen` engine (`tools/erosgen/`). It
 holds **zero domain logic** — every fact (validation, diagnostics, RTE
-resolution, code generation, MCU profiles) comes from the engine. If a rule
-isn't in `erosgen`, it isn't in the GUI.
+resolution, code generation, MCU profiles, and the peripheral/pin-conflict
+rules behind the forms below) comes from the engine via `ProjectModel`. If a
+rule isn't in `erosgen`, it isn't in the GUI.
 
 ```sh
 uv run --extra gui python -m gui [path/to/app.yaml]
@@ -11,30 +12,50 @@ uv run --extra gui python -m gui [path/to/app.yaml]
 
 ## What it does
 
-- **Project tree** (left): system + MCU, tasks, models (with each port's
-  binding), and the pre-flash **static-RAM budget** (kernel / pool / rings /
-  free) — the "see RAM before you flash" figure the report prints.
-- **Live diagnostics** (right): the engine's `collect_diagnostics()` +
-  model port-binding checks, as a colour-coded problem list that updates on
-  every edit (e.g. `PIN_CONFLICT`, `UNKNOWN_MCU`, `TYPE_TOO_NARROW`,
-  `PORT_NO_DRIVER`, `HARMONIC`).
-- **Build console** (bottom): streams `make` via `QProcess`.
+A **master-detail configurator**: pick a node in the project tree (left), edit
+it on the context panel (right); the problem list and build console sit in tabs
+along the bottom.
+
+- **Project tree** (left) — grouped, and rebuilt from the engine on every edit:
+  - **System** — name + MCU/board and the pre-flash **static-RAM budget**
+    (kernel / pool / rings / free), the "see RAM before you flash" figure.
+  - **Tasks**, grouped by rate and ordered by engine-assigned priority within a
+    rate. Markers: `◆` codegen (model) task · `⬡` hand-authored ASW task (has a
+    port interface) · plain task (no mark). Codegen/ASW rows expand to their
+    signals.
+  - **Resources** — OSEK shared sections with their user lists.
+  - **Peripherals** — every peripheral the MCU offers; `●` = active, `○` =
+    inactive, header shows `active/total`.
+- **Context panel** (right) — swapped per selection:
+  - **System** → MCU/board **retarget** (live: diagnostics + budget re-derive)
+    and the memory budget.
+  - **Task** → its scheduling (period, WCET, autostart, watchdog, within-rate
+    priority order).
+  - **Codegen / hand-ASW task** → its `in`/`out` interface with **inline port
+    binding** — bind each signal to a driver (`adc`/`dio`/`pwm`) *or* to another
+    SWC's output as an **ASW→ASW internal signal** (`← <SWC>.<OUT>`). The
+    channel/pin pickers are **conflict-aware**: an already-owned pin/channel
+    can't be selected.
+  - **Resource** → editor (name, users, `mask_tick_isr`).
+  - **Peripheral** → activate + configure its parameters (e.g. UART baud/rings,
+    PWM/Timer0 frequency, SPI mode/clock, ADC reference/prescaler, I²C speed),
+    with the same conflict-aware pin/channel pickers.
+- **Problems** tab (bottom) — the engine's `collect_diagnostics()` + model
+  port-binding checks as a colour-coded list that updates on every edit
+  (`PIN_CONFLICT`, `UNKNOWN_MCU`, `TYPE_TOO_NARROW`, `PORT_NO_DRIVER`,
+  `HARMONIC`, …); double-click a row to jump to its source location.
+- **Console** tab (bottom) — streams `make` (Generate / Build) via `QProcess`.
 - **Menus**
-  - **File** — New Project… · Open… · Save · Save As… · Generate · Build
-  - **Edit** — Add Task… · Remove Selected Task
-  - **Model** — Add Model from codegen… (parses a `<model>_ert_rtw` dir and
-    lists its signals) · Bind Port… (bind a signal to `adc`/`dio`/`pwm`)
-  - **MCU selector** (toolbar) — retarget live; diagnostics + budget re-derive
+  - **File** — New Project… · Open… · Save · Save As… · Generate · Build · Exit
+  - **Edit** — Add Task… · Add **Codegen** Task… · Add **Resource…** · Remove
+    Selected
+  - **Help** — About
+
+  Port binding is **not** a menu — it is inline on the selected model/ASW-task
+  page. (The old read-only "Model" menu is gone.)
 - **YAML** is round-tripped with `ruamel.yaml`, so comments and key order
   survive a Save (flow-map inner spacing may normalize — a ruamel default, not
-  comment loss).
-
-## Not included
-
-- **Signal→signal wiring between tasks/models** (one model's output to
-  another's input). The engine has no model-to-model connection concept —
-  cross-rate signals are the hand-written `asw_signals` layer — so there is no
-  menu for it; it would be a new engine feature, not just a GUI one.
+  comment loss). "Once" files are never clobbered.
 
 ## Layout & tests
 
@@ -42,10 +63,11 @@ uv run --extra gui python -m gui [path/to/app.yaml]
 gui/
   __init__.py     puts tools/ on the path for `import erosgen`
   project.py      ProjectModel — the pure, Qt-free bridge (load/save/edit,
-                  diagnostics, budget, model parsing + port binding, generate)
-  main_window.py  the two-pane MainWindow (a view over ProjectModel)
+                  diagnostics, budget, peripherals, model parsing + port
+                  binding incl. ASW→ASW sources, resources, generate)
+  main_window.py  the master-detail MainWindow (a view over ProjectModel)
   __main__.py     `python -m gui` entry point
-  test_gui.py     11 tests, run headless under Qt's offscreen platform
+  test_gui.py     37 tests, run headless under Qt's offscreen platform
 ```
 
 ```sh
