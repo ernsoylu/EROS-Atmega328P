@@ -291,6 +291,16 @@ class System:
                              f"pwm freq_hz {want} Hz rounds to the nearest "
                              f"achievable {cfg[2]:.1f} Hz", "peripherals.pwm")
 
+        spi = self.peripherals.get("spi") or {}
+        if isinstance(spi, dict) and spi:
+            check_keys(spi, "spi", "peripherals.spi", sink)
+        if spi.get("mode") is not None and int(spi["mode"]) not in (0, 1, 2, 3):
+            sink.error("SPI_MODE", "spi mode must be 0..3", "peripherals.spi")
+        if (spi.get("clock") is not None
+                and int(spi["clock"]) not in (2, 4, 8, 16, 32, 64, 128)):
+            sink.error("SPI_CLOCK", "spi clock must be an SPI_CLK_DIV divider "
+                       "(2, 4, 8, 16, 32, 64, 128)", "peripherals.spi")
+
         # ---- gpio + pin ownership matrix --------------------------------
         self.gpio = self._parse_gpio(doc.get("gpio", []) or [], sink)
         self._check_pins(sink)

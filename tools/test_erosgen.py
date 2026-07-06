@@ -881,6 +881,36 @@ def test_pwm_frequency_diagnostics():
     assert "PWM_FREQ_RANGE" in codes(20000000)                      # unreachable
 
 
+# --- Configurable SPI (mode + clock via the SPI_Init args) ---------------
+
+def test_spi_config_init_args():
+    from erosgen.emit import emit_os_gen_h
+
+    def initline(spi):
+        s = _system(
+            "system: { name: t, mcu: atmega328p, drivers_dir: ../drivers }\n"
+            "tasks: [{ name: a, period_ms: 10, wcet_ms: 1 }]\n"
+            "resources: [{ name: r, users: [a] }]\n"
+            f"peripherals: {{ spi: {spi} }}\n")
+        return next(ln.strip() for ln in emit_os_gen_h(s).splitlines()
+                    if "SPI_Init" in ln)
+    assert initline("{}") == "SPI_Init(SPI_MODE0, SPI_CLK_DIV16);"      # default
+    assert initline("{ mode: 2, clock: 8 }") == \
+        "SPI_Init(SPI_MODE2, SPI_CLK_DIV8);"
+
+
+def test_spi_config_validation():
+    def codes(spi):
+        doc = {"system": {"name": "t", "mcu": "atmega328p"},
+               "tasks": [{"name": "a", "period_ms": 10, "wcet_ms": 1}],
+               "resources": [{"name": "r", "users": ["a"]}],
+               "peripherals": {"spi": spi}}
+        return {d.code for d in erosgen.collect_diagnostics(doc, Path("x"))}
+    assert "SPI_MODE" in codes({"mode": 5})
+    assert "SPI_CLOCK" in codes({"clock": 3})
+    assert not {"SPI_MODE", "SPI_CLOCK"} & codes({"mode": 1, "clock": 64})
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

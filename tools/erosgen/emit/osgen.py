@@ -8,6 +8,21 @@ from ..backends import bit_clear, bit_set
 from ..constants import GENERATED_BANNER, INCLUDE_EROS_H
 
 
+def _driver_init_call(s, p):
+    """The Init() call for peripheral p in Board_ConfigurePins: the profile
+    default, or - for spi - built from peripherals.spi {mode, clock} so the SPI
+    mode + clock divider are configurable without a driver change. Defaults keep
+    the profile string (SPI_MODE0 / SPI_CLK_DIV16), so an spi with no config is
+    byte-identical."""
+    if p == "spi":
+        cfg = s.peripherals.get("spi") or {}
+        if cfg.get("mode") is not None or cfg.get("clock") is not None:
+            mode = int(cfg.get("mode", 0))
+            clock = int(cfg.get("clock", 16))
+            return f"SPI_Init(SPI_MODE{mode}, SPI_CLK_DIV{clock});"
+    return s.profile.driver_init[p]
+
+
 def emit_os_gen_h(s):
     """Always-regenerated glue kept in lockstep with the YAML: board pin
     setup (from gpio + peripheral inits) and alarm arming. main.c calls
@@ -55,7 +70,7 @@ def emit_os_gen_h(s):
                 L.append(f"    {bit_set(f'PORT{port}', bit)};  /* pull-up */")
     for p in sorted(s.peripherals):
         if p in s.profile.driver_init:
-            L.append(f"    {s.profile.driver_init[p]}")
+            L.append(f"    {_driver_init_call(s, p)}")
     if s.models:
         L.append("    Rte_Init();  /* BSW init for bound ports + ASW init */")
     if (not s.gpio and not s.models
