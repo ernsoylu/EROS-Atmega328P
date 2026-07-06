@@ -171,8 +171,8 @@ def test_mainwindow_new_project():
     w = MainWindow(ProjectModel())    # start empty (no project)
     w.project.new("demo", "atmega328p")
     w.refresh()
-    # System + "100 ms" (main) + "aperiodic" (init) + Resources
-    assert w.tree.topLevelItemCount() == 4
+    # System + "100 ms" (main) + "aperiodic" (init) + Resources + Peripherals
+    assert w.tree.topLevelItemCount() == 5
     assert w.diag.rowCount() == 0            # the skeleton is valid -> no problems
     w.close()
 
@@ -400,6 +400,45 @@ def test_mainwindow_input_offers_and_wires_internal_source():
     w._show_inspector()
     table2 = w.inspector.widget().findChild(QTableWidget)
     assert table2.cellWidget(0, 3).currentText() == "← App1.OUT_A1_B"
+    w.close()
+
+
+def test_projectmodel_peripherals_and_pwm():
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    names = {r["name"] for r in p.known_peripherals()}
+    assert {"pwm", "uart", "adc", "spi", "i2c"} <= names   # MCU's peripherals
+    assert not p.peripheral_active("pwm")
+    p.activate_peripheral("pwm", True)
+    assert p.peripheral_active("pwm")
+    p.set_peripheral_prop("pwm", "freq_hz", 2000)
+    assert p.peripheral_config("pwm")["freq_hz"] == 2000
+    assert p.pwm_achieved(2000)[0] == 2000.0 and p.pwm_achieved(2000)[1] == "timer1"
+    p.activate_peripheral("pwm", False)
+    assert not p.peripheral_active("pwm")
+
+
+def test_mainwindow_peripherals_page():
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QSpinBox
+    _app()
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    w = MainWindow(p)
+    # a Peripherals node exists with each MCU peripheral as a child
+    per_item = _find_by_kind(w, "peripheral")
+    assert per_item is not None
+    # open the pwm page, activate, set frequency via the widgets
+    w._sel = ("peripheral", "pwm")
+    w._show_inspector()
+    w._activate_peripheral("pwm", True)
+    w._sel = ("peripheral", "pwm")
+    w._show_inspector()                       # rebuild -> now shows the config
+    spin = w.inspector.widget().findChild(QSpinBox)
+    assert spin is not None                   # frequency spinbox present
+    spin.setValue(2000)
+    w._set_peripheral_prop("pwm", "freq_hz", spin.value())
+    assert p.peripheral_config("pwm")["freq_hz"] == 2000
     w.close()
 
 

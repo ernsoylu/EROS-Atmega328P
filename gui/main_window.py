@@ -179,6 +179,18 @@ class MainWindow(QMainWindow):
             ri = QTreeWidgetItem(rroot, [r["name"], users])
             ri.setData(0, Qt.UserRole, ("resource", r["name"]))
 
+        # Peripherals the MCU offers - activate + configure; ● marks active.
+        periphs = p.known_peripherals()
+        n_active = sum(1 for r in periphs if r["active"])
+        proot = QTreeWidgetItem(self.tree, ["Peripherals",
+                                            f"{n_active}/{len(periphs)}"])
+        proot.setData(0, Qt.UserRole, ("section",))
+        for r in periphs:
+            mark = "● " if r["active"] else "○ "
+            pins = ", ".join(r["pins"]) if r["pins"] else ""
+            pi = QTreeWidgetItem(proot, [mark + r["name"], pins])
+            pi.setData(0, Qt.UserRole, ("peripheral", r["name"]))
+
         self.tree.expandAll()
         self.tree.blockSignals(False)
         self._reselect()
@@ -251,6 +263,8 @@ class MainWindow(QMainWindow):
                     else self._page_model(name))
         elif kind == "resource":
             page = self._page_resource(self._sel[1])
+        elif kind == "peripheral":
+            page = self._page_peripheral(self._sel[1])
         else:
             page = QLabel("Select a node on the left.")
         # Swap via takeWidget + deleteLater rather than letting setWidget delete
@@ -583,6 +597,97 @@ class MainWindow(QMainWindow):
         lay.addWidget(apply)
         lay.addStretch(1)
         return w
+
+    def _page_peripheral(self, name):
+        """Activate + configure one peripheral. Activating compiles its driver
+        and claims its pins (so overlaps show live in Problems). Config forms
+        exist for pwm (frequency) and uart (baud/rings); the rest are toggle
+        only for now."""
+        p = self.project
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        active = p.peripheral_active(name)
+        pins = next((r["pins"] for r in p.known_peripherals()
+                     if r["name"] == name), [])
+        gb = QGroupBox(f"Peripheral: {name}")
+        form = QFormLayout(gb)
+        act = QCheckBox("active (compiled in; claims its pins)")
+        act.setChecked(active)
+        act.toggled.connect(lambda on: self._activate_peripheral(name, on))
+        form.addRow("", act)
+        form.addRow("pins", QLabel(", ".join(pins) or "—"))
+        lay.addWidget(gb)
+
+        if active:
+            cfg = p.peripheral_config(name)
+            if name == "pwm":
+                lay.addWidget(self._pwm_config_group(cfg))
+            elif name == "uart":
+                lay.addWidget(self._uart_config_group(cfg))
+            else:
+                lay.addWidget(QLabel("No configurable properties yet — it's "
+                                     "compiled in and ready to call."))
+        lay.addStretch(1)
+        return w
+
+    def _pwm_config_group(self, cfg):
+        gb = QGroupBox("PWM (Timer1 fast-PWM)")
+        form = QFormLayout(gb)
+        freq = QSpinBox()
+        freq.setRange(1, 2000000)
+        freq.setSuffix(" Hz")
+        freq.setValue(int(cfg.get("freq_hz", 1000)))
+        note = QLabel()
+
+        def refresh_note(v):
+            got = self.project.pwm_achieved(v)
+            note.setText(f"→ actual {got[0]:.0f} Hz on {got[1]}"
+                         if got else "→ unreachable at this F_CPU")
+        freq.valueChanged.connect(refresh_note)
+        refresh_note(freq.value())
+        form.addRow("frequency", freq)
+        form.addRow("", note)
+        apply = QPushButton("Apply frequency")
+        apply.clicked.connect(
+            lambda: self._set_peripheral_prop("pwm", "freq_hz", freq.value()))
+        form.addRow(apply)
+        return gb
+
+    def _uart_config_group(self, cfg):
+        gb = QGroupBox("UART")
+        form = QFormLayout(gb)
+        baud = QComboBox()
+        baud.setEditable(True)
+        for b in (9600, 19200, 38400, 57600, 115200):
+            baud.addItem(str(b))
+        baud.setCurrentText(str(cfg.get("baud", 9600)))
+        form.addRow("baud", baud)
+        rings = {}
+        for key in ("tx_ring", "rx_ring"):
+            box = QComboBox()
+            for n in (16, 32, 64, 128, 256):
+                box.addItem(str(n))
+            box.setCurrentText(str(cfg.get(key, 128 if key == "tx_ring" else 64)))
+            form.addRow(key, box)
+            rings[key] = box
+        apply = QPushButton("Apply UART")
+
+        def commit():
+            self.project.set_peripheral_prop("uart", "baud", int(baud.currentText()))
+            for key, box in rings.items():
+                self.project.set_peripheral_prop("uart", key, int(box.currentText()))
+            self._defer_refresh()
+        apply.clicked.connect(commit)
+        form.addRow(apply)
+        return gb
+
+    def _activate_peripheral(self, name, on):
+        self.project.activate_peripheral(name, on)
+        self._defer_refresh()
+
+    def _set_peripheral_prop(self, name, key, value):
+        self.project.set_peripheral_prop(name, key, value)
+        self._defer_refresh()
 
     def _fill_params_cell(self, table, row, driver, params, state):
         """Put the right param picker in the Params cell for `driver`: adc -> a

@@ -718,6 +718,63 @@ class ProjectModel:
                 return True
         return False
 
+    # ---- peripherals (activate + configure; pins for conflict awareness) --
+    def _profile(self):
+        from erosgen.mcu.profile import load_profile
+        return load_profile(self.mcu)
+
+    def known_peripherals(self):
+        """Every peripheral this MCU offers (profile order): [{name, active,
+        pins}]. `pins` are the pins it owns when active (profile SSOT for
+        conflict detection). [] on an unknown MCU."""
+        try:
+            pr = self._profile()
+        except Exception:
+            return []
+        active = self.plain.get("peripherals", {}) or {}
+        return [{"name": n, "active": n in active,
+                 "pins": list(pr.peripheral_pins.get(n, []))}
+                for n in pr.known_peripherals]
+
+    def peripheral_active(self, name):
+        return name in (self.plain.get("peripherals", {}) or {})
+
+    def activate_peripheral(self, name, on=True):
+        """Add/remove a peripheral in the peripherals: section. Deactivating drops
+        its config too (re-activating starts from defaults)."""
+        per = self.doc.setdefault("peripherals", {})
+        if on:
+            if name not in per:
+                per[name] = {}
+        else:
+            per.pop(name, None)
+
+    def peripheral_config(self, name):
+        return dict((self.plain.get("peripherals", {}) or {}).get(name) or {})
+
+    def set_peripheral_prop(self, name, key, value):
+        """Set (or clear when blank) one property of an active peripheral."""
+        per = self.doc.setdefault("peripherals", {})
+        cfg = per.get(name)
+        if not isinstance(cfg, dict):
+            cfg = {}
+            per[name] = cfg
+        if value in (None, ""):
+            cfg.pop(key, None)
+        else:
+            cfg[key] = value
+
+    def pwm_achieved(self, freq_hz):
+        """(actual_hz, timer_name) for a requested pwm freq_hz on this MCU, or
+        None if unreachable - the live 'you'll actually get X Hz' feedback."""
+        try:
+            from erosgen.pwmcfg import pwm_config, pwm_timer
+            pr = self._profile()
+            cfg, timer = pwm_config(pr, int(freq_hz)), pwm_timer(pr)
+            return (cfg[2], timer[0]) if cfg and timer else None
+        except Exception:
+            return None
+
     # ---- target: chip (MCU) + board -------------------------------------
     def available_targets(self):
         """Every MCU profile grouped by chip: {chip: [profile, ...]}. A profile
