@@ -359,7 +359,7 @@ def test_model_app_end_to_end_goldens():
     from erosgen import Diagnostics, System, resolve_models
     from erosgen.emit import (emit_config_c, emit_config_h, emit_main_skeleton,
                               emit_makefile, emit_os_gen_h, emit_rte_c,
-                              emit_rte_cfg_h, emit_rte_h)
+                              emit_rte_cfg_h, emit_rte_h, emit_rte_swc_h)
     d = HERE / "fixtures" / "model_app"
     doc = yaml.safe_load((d / "app.yaml").read_text())
     s = System(doc, d / "app.yaml")
@@ -377,6 +377,7 @@ def test_model_app_end_to_end_goldens():
     got["Rte.h"] = emit_rte_h(rm, "app.yaml")
     got["Rte_Cfg.h"] = emit_rte_cfg_h(rm, "app.yaml")
     got["Rte.c"] = emit_rte_c(rm, "app.yaml", integrated=True)
+    got[f"Rte_{rm.name}.h"] = emit_rte_swc_h(rm, "app.yaml")   # contract header
     for name, text in got.items():
         assert text == (d / name).read_text(), f"model_app/{name} drifted"
     # the model became a real OS task + alarm
@@ -1229,6 +1230,52 @@ def test_main_function_validation():
     assert "MAIN_FUNCTION_UNSUPPORTED" not in codes(
         {"adc": {"main_function_ms": 10}},
         [{"name": "a", "period_ms": 10, "wcet_ms": 1}])
+
+
+def test_rte_contract_header_per_swc():
+    """A per-SWC Rte_<SWC>.h declares Rte_Run_<SWC> + a port summary so the SWC
+    compiles standalone (AUTOSAR contract phase); the combined Rte.h is
+    unchanged."""
+    from erosgen import emit_rte_swc_h
+    from erosgen.models import BoundPort, ResolvedModel
+    from erosgen.parse import Signal
+    inp = BoundPort(Signal("IN_Knb_Z", "uint16_T", "in"), "in", "adc",
+                    {"channel": 0}, "Knb_Z")
+    out = BoundPort(Signal("OUT_Led_B", "boolean_T", "out"), "out", "dio",
+                    {"port": "B", "bit": 5}, "Led_B")
+    rm = ResolvedModel("appKnbSwt", "appKnbSwt_initialize", "appKnbSwt_Runnable",
+                       10, [inp], [out], None)
+    h = emit_rte_swc_h(rm, "app.yaml")
+    assert "#ifndef RTE_APPKNBSWT_H" in h
+    assert "void Rte_Run_appKnbSwt(void);" in h
+    assert "IN_Knb_Z (uint16_T) <- adc" in h
+    assert "OUT_Led_B (boolean_T) -> dio" in h
+    # the fixtures ship one per SWC (byte-pinned by the end-to-end goldens)
+    assert (HERE / "fixtures" / "model_multi" / "Rte_motor.h").exists()
+
+
+def test_asw_asw_connection_cross_rate():
+    """An ASW->ASW signal works across DIFFERENT rates: on the non-preemptive
+    kernel the RTE's latched-global copy IS the rate-transition layer (no queue).
+    With the faster producer at higher priority (runs first) there's no
+    CONN_ORDER warning."""
+    from erosgen.asw import resolve_asw_task
+    from erosgen.diagnostics import Diagnostics
+    from erosgen.emit.rte import emit_rte_c
+    from erosgen.models import resolve_connections
+    fast = {"name": "Sensor", "period_ms": 10, "wcet_ms": 1,
+            "ports": {"out": [{"signal": "OUT_Speed_Z", "type": "uint16_T",
+                               "driver": "internal"}]}}
+    slow = {"name": "Logger", "period_ms": 100, "wcet_ms": 1,
+            "ports": {"in": [{"signal": "IN_Speed_Z", "type": "uint16_T",
+                              "source": "Sensor.OUT_Speed_Z"}]}}
+    sink = Diagnostics(strict=False)
+    rms = [resolve_asw_task(fast, sink), resolve_asw_task(slow, sink)]
+    resolve_connections(rms, {"SENSOR": 5, "LOGGER": 3}, sink)   # producer first
+    assert [d for d in sink.items if d.severity == "error"] == []
+    assert not any(d.code == "CONN_ORDER" for d in sink.items)
+    rte = emit_rte_c(rms, "app.yaml", integrated=True)
+    assert "RTE_CFG_SPEED_Z_SIGNAL = OUT_Speed_Z;" in rte        # latched copy
 
 
 def _run_standalone():

@@ -12,6 +12,7 @@ from .diagnostics import Diagnostic, Diagnostics
 from .emit import (driver_sources, emit_asw_skeleton, emit_config_c,
                    emit_config_h, emit_main_skeleton, emit_makefile,
                    emit_os_gen_h, emit_rte_c, emit_rte_cfg_h, emit_rte_h,
+                   emit_rte_swc_h,
                    periph_defines)
 from .errors import ConfigError, fail
 from .model import Resource, System, Task, collect_diagnostics
@@ -32,5 +33,6 @@ __all__ = [
     "emit_config_h", "emit_config_c", "emit_makefile", "emit_os_gen_h",
     "emit_asw_skeleton", "emit_main_skeleton", "driver_sources",
     "periph_defines", "emit_rte_cfg_h", "emit_rte_c", "emit_rte_h",
+    "emit_rte_swc_h",
     "report", "main", "write",
 ]
