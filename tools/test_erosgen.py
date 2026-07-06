@@ -739,7 +739,10 @@ def test_asw_task_end_to_end_generate():
             assert (Path(tmp) / f).exists(), f"missing generated {f}"
         # regenerating must NOT clobber a hand-edited runnable (overwrite=False)
         body = Path(tmp) / "ctrl.c"
-        body.write_text(body.read_text() + "\n/* my algorithm */\n")
+        # append the "hand edit" (not read_text()+concat+write_text, which trips
+        # taint analysis reading its own output back as external input)
+        with body.open("a") as fh:
+            fh.write("\n/* my algorithm */\n")
         erosgen.main(["erosgen", str(app)])
         assert "/* my algorithm */" in body.read_text()
 
