@@ -418,6 +418,29 @@ def test_projectmodel_peripherals_and_pwm():
     assert not p.peripheral_active("pwm")
 
 
+def test_projectmodel_conflict_aware_pins():
+    p = ProjectModel()
+    p.new("t", "arduino_uno")
+    p.add_task("T", period_ms=10)
+    p.make_asw_task("T")
+    p.add_port("T", "out", "OUT_a", "boolean_T", "")
+    p.add_port("T", "out", "OUT_b", "boolean_T", "")
+    assert {"PB2", "PB3", "PB4", "PB5"} <= {d["pin"] for d in p.dio_pins()}
+    # activating SPI (owns PB2..PB5) hides those from the dio picker
+    p.activate_peripheral("spi", True)
+    avail = {d["pin"] for d in p.available_dio_pins("T", "OUT_a")}
+    assert not ({"PB2", "PB3", "PB4", "PB5"} & avail)
+    # a dio-bound pin is hidden from other ports but kept for its own row
+    p.bind_port("T", "OUT_b", "dio", port="B", bit=0)
+    assert "PB0" not in {d["pin"] for d in p.available_dio_pins("T", "OUT_a")}
+    assert "PB0" in {d["pin"] for d in p.available_dio_pins("T", "OUT_b")}
+    # an ADC channel in use hides its A-pin from dio, and vice-versa (A0 = PC0)
+    p.add_port("T", "in", "IN_x", "uint16_T", "")
+    p.bind_port("T", "IN_x", "adc", channel=0)
+    assert "PC0" not in {d["pin"] for d in p.available_dio_pins("T", "OUT_a")}
+    assert 0 in p.available_adc_channels("T", "IN_x")     # its own channel kept
+
+
 def test_mainwindow_peripherals_page():
     from gui.main_window import MainWindow
     from PySide6.QtWidgets import QSpinBox

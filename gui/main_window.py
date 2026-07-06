@@ -485,10 +485,10 @@ class MainWindow(QMainWindow):
                     combo.setCurrentIndex(k)
             table.setCellWidget(i, 3, combo)
             st["combo"] = combo
-            self._fill_params_cell(table, i, r["driver"], r["params"], st)
+            self._fill_params_cell(table, i, r["driver"], r["params"], st, name)
             combo.currentTextChanged.connect(
                 lambda drv, row=i, s=st: self._fill_params_cell(table, row, drv,
-                                                                {}, s))
+                                                                {}, s, name))
             if editable:
                 desc = QLineEdit(r["description"])
                 table.setCellWidget(i, 5, desc)
@@ -689,16 +689,19 @@ class MainWindow(QMainWindow):
         self.project.set_peripheral_prop(name, key, value)
         self._defer_refresh()
 
-    def _fill_params_cell(self, table, row, driver, params, state):
+    def _fill_params_cell(self, table, row, driver, params, state, swc=None):
         """Put the right param picker in the Params cell for `driver`: adc -> a
-        channel dropdown, dio -> a pin dropdown, pwm/unbound -> nothing. Sets
+        channel dropdown, dio -> a pin dropdown, pwm/unbound -> nothing. The pin
+        and channel lists hide anything already owned by an active peripheral,
+        gpio, or another port (conflict-aware), so a clash can't be picked. Sets
         state['get'] to a callable returning the chosen params dict."""
+        sig = state.get("signal")
         cell = QWidget()
         h = QHBoxLayout(cell)
         h.setContentsMargins(4, 0, 4, 0)
         if driver == "adc":
             box = QComboBox()
-            for ch in self.project.adc_channels():
+            for ch in self.project.available_adc_channels(swc, sig):
                 box.addItem(f"channel {ch}", ch)
             idx = box.findData(params.get("channel"))
             box.setCurrentIndex(idx if idx >= 0 else 0)
@@ -706,7 +709,7 @@ class MainWindow(QMainWindow):
             state["get"] = lambda: {"channel": box.currentData()}
         elif driver == "dio":
             box = QComboBox()
-            for pin in self.project.dio_pins():
+            for pin in self.project.available_dio_pins(swc, sig):
                 box.addItem(pin["label"], pin["pin"])     # userData = "PB5"
             port, bit = params.get("port"), params.get("bit")
             want = f"P{port}{bit}" if port and bit is not None else None

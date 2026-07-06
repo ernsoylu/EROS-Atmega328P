@@ -775,6 +775,71 @@ class ProjectModel:
         except Exception:
             return None
 
+    def _adc_alias_pins(self, pr):
+        """{adc_channel: PXn} from the board's A-pin aliases (A0 -> PC0)."""
+        return {int(k[1:]): v for k, v in pr.aliases.items()
+                if re.fullmatch(r"A\d+", k)}
+
+    def owned_pins(self, exclude=None):
+        """Pins already claimed - by an active peripheral, a gpio entry, a dio
+        port binding, or an ADC channel in use (via its A-pin) - so the pickers
+        can hide them and a conflict becomes impossible to select rather than
+        only flagged. `exclude` is an (swc, signal) whose own claim is skipped,
+        so a port's current pin/channel stays selectable."""
+        pins = set()
+        try:
+            pr = self._profile()
+        except Exception:
+            return pins
+        for name in (self.plain.get("peripherals", {}) or {}):
+            pins.update(pr.peripheral_pins.get(name, []))
+        for g in self.plain.get("gpio", []) or []:
+            if isinstance(g, dict) and g.get("pin"):
+                pins.add(pr.aliases.get(str(g["pin"]).upper(), str(g["pin"])))
+        adc_alias = self._adc_alias_pins(pr)
+        for e in self._swc_entries():
+            for direction in ("in", "out"):
+                for pd in (e.get("ports", {}) or {}).get(direction, []) or []:
+                    if not isinstance(pd, dict):
+                        continue
+                    if exclude and (e.get("name"), pd.get("signal")) == exclude:
+                        continue
+                    if (pd.get("driver") == "dio" and pd.get("port")
+                            and pd.get("bit") is not None):
+                        pins.add(f"P{pd['port']}{pd['bit']}")
+                    elif (pd.get("driver") == "adc"
+                          and pd.get("channel") is not None):
+                        pin = adc_alias.get(int(pd["channel"]))
+                        if pin:
+                            pins.add(pin)
+        return pins
+
+    def available_dio_pins(self, name, signal):
+        """dio_pins() minus pins already owned elsewhere, always keeping this
+        port's current pin so it stays selectable."""
+        owned = self.owned_pins(exclude=(name, signal))
+        cur = self._port_dict(name, signal) or {}
+        keep = (f"P{cur['port']}{cur['bit']}"
+                if cur.get("port") and cur.get("bit") is not None else None)
+        return [d for d in self.dio_pins()
+                if d["pin"] not in owned or d["pin"] == keep]
+
+    def available_adc_channels(self, name, signal):
+        """adc_channels() minus channels whose A-pin is already owned elsewhere,
+        keeping this port's current channel."""
+        try:
+            owned = self.owned_pins(exclude=(name, signal))
+            alias = self._adc_alias_pins(self._profile())
+        except Exception:
+            return self.adc_channels()
+        cur = (self._port_dict(name, signal) or {}).get("channel")
+        out = []
+        for ch in self.adc_channels():
+            pin = alias.get(ch)
+            if pin is None or pin not in owned or ch == cur:
+                out.append(ch)
+        return out
+
     # ---- target: chip (MCU) + board -------------------------------------
     def available_targets(self):
         """Every MCU profile grouped by chip: {chip: [profile, ...]}. A profile
