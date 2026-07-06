@@ -4,7 +4,7 @@ Ties parse/ert.py (what the SWC exports) to bind.py (is each port binding
 type-safe) so emit/rte.py can generate Rte_Cfg.h / Rte.c. Structural checks and
 binding checks both flow through the Diagnostics sink. Schema: rte/README.md.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .bind import DRIVERS, check_binding
@@ -49,6 +49,7 @@ class ResolvedModel:
     inputs: list          # BoundPort[]
     outputs: list         # BoundPort[]
     interface: ModelInterface
+    extra_runnables: list = field(default_factory=list)  # [(runnable, rate_ms)]
 
 
 def _stem(signal_name):
@@ -119,8 +120,20 @@ def resolve_model(mspec, app_dir, sink):
                      f"model's entry points {iface.runnable_fns}", where)
 
     inputs, outputs = bind_ports(iface, mspec, where, sink)
+    # extra_runnables: additional runnables of this SWC scheduled at their own
+    # rates (compute-only tasks; the primary runnable does the port I/O).
+    extra = []
+    for er in (mspec.get("extra_runnables") or []):
+        er_fn, er_rate = er.get("runnable"), er.get("rate_ms")
+        if not er_fn or er_rate is None:
+            continue        # already reported by System._parse_models
+        if er_fn not in iface.runnable_fns and er_fn != runnable_fn:
+            sink.warning("MODEL_RUNNABLE_UNKNOWN",
+                         f"{where}: extra runnable '{er_fn}' is not among the "
+                         f"model's entry points {iface.runnable_fns}", where)
+        extra.append((er_fn, int(er_rate)))
     return ResolvedModel(name, init_fn, runnable_fn, mspec.get("rate_ms"),
-                         inputs, outputs, iface)
+                         inputs, outputs, iface, extra)
 
 
 def bind_ports(iface, spec, where, sink):

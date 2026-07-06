@@ -408,6 +408,15 @@ def emit_rte_c(models, src_name, integrated=False):
             L.append(f"    Rte_Run_{rm.name}();")
             L.append("    TerminateTask();")
             L.append("}")
+            # Extra runnables of this SWC: compute-only tasks at their own rate
+            # (the primary Rte_Run above does the port I/O for the SWC).
+            for er_fn, _rate in rm.extra_runnables:
+                L.append("")
+                L.append(f"void Task_{er_fn}(void)")
+                L.append("{")
+                L.append(f"    {er_fn}();  /* extra runnable (compute-only) */")
+                L.append("    TerminateTask();")
+                L.append("}")
     else:
         L.append("/* --- OS binding (production build only) ------------------------- */")
         L.append("")
