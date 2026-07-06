@@ -111,7 +111,17 @@ def resolve_model(mspec, app_dir, sink):
                      f"{where}: runnable '{runnable_fn}' is not among the "
                      f"model's entry points {iface.runnable_fns}", where)
 
-    ports = mspec.get("ports", {}) or {}
+    inputs, outputs = bind_ports(iface, mspec, where, sink)
+    return ResolvedModel(name, init_fn, runnable_fn, mspec.get("rate_ms"),
+                         inputs, outputs, iface)
+
+
+def bind_ports(iface, spec, where, sink):
+    """Bind every port in spec['ports'] against `iface` (the SWC's exported
+    signals). Shared by codegen models (iface parsed from the ert dir) and
+    hand-authored ASW tasks (iface synthesized from the YAML) - the binding
+    rules are identical. Returns (inputs, outputs) as BoundPort lists."""
+    ports = spec.get("ports", {}) or {}
     check_keys(ports, "ports", f"{where} ports", sink)
     inputs, outputs = [], []
     for direction, bucket in (("in", inputs), ("out", outputs)):
@@ -127,7 +137,7 @@ def resolve_model(mspec, app_dir, sink):
             if sig is None:
                 sink.error("PORT_UNKNOWN_SIGNAL",
                            f"{pw}: signal '{signame}' is not exported by "
-                           f"model '{name}'", pw)
+                           f"'{iface.name}'", pw)
                 continue
             driver = pd.get("driver")
             if not driver:
@@ -135,13 +145,12 @@ def resolve_model(mspec, app_dir, sink):
                 continue
             params = {k: pd[k] for k in PORT_PARAM_KEYS if k in pd}
             slope, offset = _parse_scaling(pd, driver, pw, sink)
-            spec = check_binding(sig, direction, driver, params, sink, pw,
-                                 scaled=slope is not None)
-            if spec is not None:
+            spec_ = check_binding(sig, direction, driver, params, sink, pw,
+                                  scaled=slope is not None)
+            if spec_ is not None:
                 bucket.append(BoundPort(sig, direction, driver, params,
                                         _stem(signame), slope, offset))
-    return ResolvedModel(name, init_fn, runnable_fn, mspec.get("rate_ms"),
-                         inputs, outputs, iface)
+    return inputs, outputs
 
 
 def resolve_models(doc, app_dir, sink):

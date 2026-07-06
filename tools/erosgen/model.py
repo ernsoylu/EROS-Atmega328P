@@ -36,6 +36,11 @@ class Task:
         self.autostart = bool(d.get("autostart", False))
         self.watchdog = bool(d.get("watchdog", self.period_ms is not None))
         self.runnables = d.get("runnables", [])
+        # Explicit within-rate ordering: same-rate tasks tie-break by `order`
+        # (higher = more urgent). None => fall back to build order, which
+        # reproduces the historical "declared tasks, then model tasks" order.
+        self.order = d.get("order")
+        self._build_index = 0                   # set by System after building
         self.priority = None                    # assigned later
         self.period_ticks = None                # computed once tick known
         self.wcet_ticks = None
@@ -150,15 +155,33 @@ class System:
         # Model task bodies live in the generated Rte.c (Task_<model>), so they
         # get no asw_<rate>ms.c skeleton and aren't listed as one in the Makefile.
         self.model_task_names = {m["name"].upper() for m in self.models}
-        task_specs = list(doc.get("tasks", []))
+        # A declared task with a ports:/calibrations: interface is a hand-authored
+        # ASW SWC: like a model its body is Task_<name> in the RTE (not an
+        # asw_<rate>ms.c skeleton), and erosgen emits its <name>{,_Intfc,_Param}
+        # files. Its OS task is the *declared* one, so we just retarget its entry.
+        from .asw import is_asw_task
+        declared = list(doc.get("tasks", []) or [])
+        self.asw_tasks = [t for t in declared
+                          if is_asw_task(t) and t.get("name")]
+        self.asw_task_names = {str(t["name"]).upper() for t in self.asw_tasks}
+        self.rte_task_names = self.model_task_names | self.asw_task_names
+        task_specs = []
+        for t in declared:
+            if (isinstance(t, dict) and is_asw_task(t) and t.get("name")
+                    and "entry" not in t):
+                t = {**t, "entry": f"Task_{t['name']}"}
+            task_specs.append(t)
         for m in self.models:
             task_specs.append({
                 "name": m["name"],
                 "period_ms": m["rate_ms"],
                 "wcet_ms": m.get("wcet_ms", 1),
                 "entry": f"Task_{m['name']}",
+                "order": m.get("order"),
             })
         tasks = [Task(t, sink) for t in task_specs]
+        for i, t in enumerate(tasks):
+            t._build_index = i          # default within-rate tie-break
         if not 1 <= len(tasks) <= 8:
             sink.error("TASK_COUNT",
                        "1..8 tasks required (8-bit ready mask)", "tasks")
@@ -367,13 +390,19 @@ class System:
             claim(g["pin"], f"gpio {g['name'] or g['pin']}")
 
     def _assign_priorities(self):
-        """Autostart init lowest, then aperiodic in listed order, then
-        periodic rate-monotonically (fastest = highest)."""
+        """Autostart init lowest, then aperiodic in listed order, then periodic
+        rate-monotonically (fastest = highest). Same-rate tasks tie-break by
+        `order` (higher = more urgent) when set - so a hand task and a codegen
+        task at one rate interleave freely - else by build order (declared tasks
+        before model tasks), which preserves the historical assignment."""
+        def rate_key(t):
+            tie = t.order if t.order is not None else t._build_index
+            return (-t.period_ms, tie)     # slowest first; then less-urgent first
         auto = [t for t in self.tasks if t.autostart]
         aper = [t for t in self.tasks
                 if not t.autostart and t.period_ms is None]
         peri = sorted((t for t in self.tasks if t.period_ms is not None),
-                      key=lambda t: -t.period_ms)  # slowest first
+                      key=rate_key)
         prio = 0
         for t in auto + aper + peri:
             t.priority = prio

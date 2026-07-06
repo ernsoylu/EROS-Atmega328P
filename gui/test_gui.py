@@ -10,6 +10,8 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt  # noqa: E402
+
 from gui.project import ProjectModel  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -20,6 +22,19 @@ MODEL_APP = REPO / "tools" / "fixtures" / "model_app" / "app.yaml"
 def _app():
     from PySide6.QtWidgets import QApplication
     return QApplication.instance() or QApplication([])
+
+
+def _find_by_kind(w, kind):
+    """Walk the (now rate-grouped) tree for the first item of a given kind."""
+    stack = [w.tree.topLevelItem(i) for i in range(w.tree.topLevelItemCount())]
+    while stack:
+        it = stack.pop()
+        d = it.data(0, Qt.UserRole)
+        if d and d[0] == kind:
+            return it
+        for i in range(it.childCount()):
+            stack.append(it.child(i))
+    return None
 
 
 def test_projectmodel_reference_demo():
@@ -58,14 +73,62 @@ def test_projectmodel_set_mcu_and_budget():
     assert "UNKNOWN_MCU" not in {d.code for d in p.diagnostics()}
 
 
+def test_projectmodel_schedule_unifies_tasks_and_models():
+    # models become their own OS tasks; schedule() lists both, most-urgent first,
+    # with engine-assigned priorities (SSOT).
+    p = ProjectModel(MODEL_APP)
+    sched = p.schedule()
+    names = {r["name"] for r in sched}
+    assert "appKnbSwt" in names
+    model_row = next(r for r in sched if r["name"] == "appKnbSwt")
+    assert model_row["is_model"] and model_row["period_ms"] == 10
+    assert all(isinstance(r["priority"], int) for r in sched)
+    # sorted by descending engine priority (most urgent first)
+    prios = [r["priority"] for r in sched]
+    assert prios == sorted(prios, reverse=True)
+
+
+def test_projectmodel_update_task_and_facts():
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    p.update_task("main", period_ms=0, wcet_ms=3, autostart=True)  # -> autostart
+    row = next(r for r in p.schedule() if r["name"] == "main")
+    assert row["autostart"] and row["wcet_ms"] == 3 and not row["period_ms"]
+    facts = p.system_facts()
+    assert facts["f_cpu"] == "16000000UL" and "adc" in facts["peripherals"]
+    p.set_mcu("attiny85")
+    assert p.system_facts() == {}        # unknown MCU -> empty, not a raise
+
+
+def test_projectmodel_interfaces_and_unbind():
+    p = ProjectModel()
+    p.new("d", "atmega328p")
+    cg = str(REPO / "codegen" / "appKnbSwt_ert_rtw")
+    name, _s, runnable = p.model_signals(cg)
+    p.add_model(name, cg, runnable, rate_ms=10)
+    rows = p.model_interfaces(name)
+    assert {r["signal"] for r in rows} == {"IN_KnbVal_Z", "OUT_Led1_B"}
+    assert next(r for r in rows if r["signal"] == "IN_KnbVal_Z")["ctype"]
+    drivers = p.available_drivers()
+    assert drivers["adc"]["directions"] == ["in"]
+    assert drivers["dio"]["required"] == ["port", "bit"]
+    p.bind_port(name, "IN_KnbVal_Z", "adc", channel=0)
+    assert p.port_binding(name, "IN_KnbVal_Z") == "adc channel=0"
+    p.unbind_port(name, "IN_KnbVal_Z")
+    assert p.port_binding(name, "IN_KnbVal_Z") == "unbound"
+
+
 def test_mainwindow_smoke():
     from gui.main_window import MainWindow
     _app()
     p = ProjectModel(REF)
     w = MainWindow(p)
-    # System + Tasks + Models + Memory roots
-    assert w.tree.topLevelItemCount() == 4
+    # master-detail: System first, then one node per task rate group.
+    assert w.tree.topLevelItem(0).data(0, Qt.UserRole) == ("system",)
+    assert w.tree.topLevelItemCount() >= 2
     assert w.diag.rowCount() == len(p.diagnostics())
+    # System is selected by default -> the right panel built its MCU combo.
+    assert w.mcu_combo is not None and w.mcu_combo.count() >= 2
     w.close()
 
 
@@ -90,7 +153,8 @@ def test_mainwindow_new_project():
     w = MainWindow(ProjectModel())    # start empty (no project)
     w.project.new("demo", "atmega328p")
     w.refresh()
-    assert w.tree.topLevelItemCount() == 4   # System, Tasks, Models, Memory
+    # System + a "100 ms" group (main) + an "aperiodic" group (init)
+    assert w.tree.topLevelItemCount() == 3
     assert w.diag.rowCount() == 0            # the skeleton is valid -> no problems
     w.close()
 
@@ -118,10 +182,150 @@ def test_mainwindow_shows_model_ports():
     from gui.main_window import MainWindow
     _app()
     w = MainWindow(ProjectModel(MODEL_APP))
-    roots = [w.tree.topLevelItem(i) for i in range(w.tree.topLevelItemCount())]
-    models_root = next(r for r in roots if r.text(0) == "Models")
-    assert models_root.childCount() == 1
-    assert models_root.child(0).childCount() == 2  # IN_KnbVal_Z + OUT_Led1_B
+    # a codegen task lives under its rate group, marked ◆, and expands to ports.
+    model_item = _find_by_kind(w, "model")
+    assert model_item is not None
+    assert "appKnbSwt" in model_item.text(0) and "◆" in model_item.text(0)
+    assert model_item.childCount() == 2            # IN_KnbVal_Z + OUT_Led1_B
+    assert model_item.child(0).data(0, Qt.UserRole)[0] == "signal"
+    w.close()
+
+
+def test_mainwindow_model_page_binds_inline():
+    # Selecting a model builds the interface table; params are MCU-limited
+    # dropdowns (channel / pin), so Apply commits a well-formed binding with no
+    # parsing and no missing-key errors.
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QComboBox, QTableWidget
+    _app()
+    p = ProjectModel()
+    p.new("swc_demo", "arduino_uno")
+    cg = str(REPO / "codegen" / "appKnbSwt_ert_rtw")
+    name, _sigs, runnable = p.model_signals(cg)
+    p.add_model(name, cg, runnable, rate_ms=10)
+    w = MainWindow(p)
+    w._sel = ("model", name)
+    w._show_inspector()                            # build the model page
+    table = w.inspector.widget().findChild(QTableWidget)
+    assert table.rowCount() == 2
+    for r in range(table.rowCount()):
+        driver = table.cellWidget(r, 3)
+        if table.item(r, 0).text() == "IN_KnbVal_Z":
+            assert {driver.itemText(i) for i in range(driver.count())} == {
+                "(unbound)", "adc", "dio"}         # only in-capable drivers
+            driver.setCurrentText("adc")           # rebuilds the params cell
+            chan = table.cellWidget(r, 4).findChild(QComboBox)
+            assert chan.count() == 6               # arduino_uno: A0..A5
+            chan.setCurrentText("channel 0")
+        if table.item(r, 0).text() == "OUT_Led1_B":
+            driver.setCurrentText("dio")
+            pin = table.cellWidget(r, 4).findChild(QComboBox)
+            pin.setCurrentIndex(pin.findData("PB5"))       # PB5 (D13)
+    w._apply_model()
+    assert p.port_binding(name, "IN_KnbVal_Z") == "adc channel=0"
+    assert p.port_binding(name, "OUT_Led1_B") == "dio port=B bit=5"
+    assert [d for d in p.diagnostics() if d.severity == "error"] == []
+    w.close()
+
+
+def test_mainwindow_asw_task_page_authors_interface():
+    # A hand ASW task's page exposes an editable interface table (Signal, Dir,
+    # Type, Driver, Params, Description, remove) + a calibrations table; Apply
+    # commits type/description/binding straight from the row widgets.
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QComboBox, QTableWidget
+    _app()
+    p = ProjectModel()
+    p.new("demo", "arduino_uno")
+    p.make_asw_task("main")                         # 100 ms task -> ASW
+    p.add_port("main", "in", "IN_Knob", "uint16_T", "knob")
+    p.add_calibration("main", "Kp", "uint16_T", 5, "gain")
+    w = MainWindow(p)
+    w._sel = ("asw", "main")
+    w._show_inspector()
+    tables = w.inspector.widget().findChildren(QTableWidget)
+    iface, cals = tables[0], tables[1]
+    assert iface.horizontalHeaderItem(5).text() == "Description"
+    assert iface.item(0, 0).text() == "IN_Knob"
+    iface.cellWidget(0, 3).setCurrentText("adc")    # driver -> adc, params dropdown
+    iface.cellWidget(0, 4).findChild(QComboBox).setCurrentText("channel 0")
+    assert cals.item(0, 0).text() == "Kp"
+    w._apply_task()
+    assert p.port_binding("main", "IN_Knob") == "adc channel=0"
+    # a plain task instead offers to become an ASW task
+    w._sel = ("task", "init")
+    w._show_inspector()
+    from PySide6.QtWidgets import QPushButton
+    labels = [b.text() for b in w.inspector.widget().findChildren(QPushButton)]
+    assert any("make this an ASW task" in t for t in labels)
+    w.close()
+
+
+def test_mainwindow_priority_dropdown_interleaves_kinds():
+    # The within-rate priority dropdown places a hand task above a codegen task
+    # at the same rate (the engine tie-breaks on the `order` it writes).
+    from gui.main_window import MainWindow
+    _app()
+    p = ProjectModel()
+    p.new("demo", "arduino_uno")
+    p.add_task("ctrl", period_ms=100, wcet_ms=1)
+    p.make_asw_task("ctrl")
+    cg = str(REPO / "codegen" / "appKnbSwt_ert_rtw")
+    name, _s, runnable = p.model_signals(cg)
+    p.add_model(name, cg, runnable, rate_ms=100)
+    order0 = [x["name"] for x in p.schedule() if x["period_ms"] == 100]
+    assert order0[0] == "appKnbSwt"        # codegen task most urgent by default
+    w = MainWindow(p)
+    w._sel = ("asw", "ctrl")
+    w._show_inspector()
+    w._set_priority("ctrl", 0)             # dropdown -> position 0 (most urgent)
+    order1 = [x["name"] for x in p.schedule() if x["period_ms"] == 100]
+    assert order1[0] == "ctrl"             # hand task now outranks the codegen one
+    w.close()
+
+
+def test_mainwindow_system_page_mcu_change_rerenders():
+    # The MCU dropdown now lives on the System page; changing it re-derives the
+    # facts panel and the problem list (the fix for "MCU is not changing").
+    from gui.main_window import MainWindow
+    _app()
+    p = ProjectModel(REF)
+    w = MainWindow(p)                      # System selected by default
+    assert w.mcu_combo.currentText() == "atmega328p"
+    w._on_mcu_changed("attiny85")          # unknown -> UNKNOWN_MCU appears live
+    assert p.mcu == "attiny85"
+    w.refresh()
+    codes = {w.diag.item(r, 1).text() for r in range(w.diag.rowCount())}
+    assert "UNKNOWN_MCU" in codes
+    w.close()
+
+
+def test_mainwindow_mcu_change_on_empty_launch():
+    # Regression: on a fresh launch the doc is {} (title "(no project)"). The old
+    # `if self.project.doc` guard made the MCU combo a no-op there.
+    from gui.main_window import MainWindow
+    _app()
+    w = MainWindow(ProjectModel())         # empty doc, no project
+    assert not w.project.doc
+    w._on_mcu_changed("atmega2560")        # used to do nothing
+    assert w.project.mcu == "atmega2560"   # now creates system.mcu
+    w.close()
+
+
+def test_mainwindow_board_selector():
+    # MCU picks the chip; Board picks a concrete profile on it. arduino_uno and
+    # the bare atmega328p share one chip but target different board profiles.
+    from gui.main_window import MainWindow
+    _app()
+    p = ProjectModel()
+    p.new("t", "arduino_uno")
+    w = MainWindow(p)                       # System page built the two combos
+    assert w.mcu_combo.currentText() == "atmega328p"        # chip
+    assert w.board_combo.currentText() == "arduino_uno"     # board
+    boards = {w.board_combo.itemText(i) for i in range(w.board_combo.count())}
+    assert boards == {"atmega328p", "arduino_uno"}
+    w._on_board_changed("atmega328p")      # switch board within the same chip
+    assert p.mcu == "atmega328p"
     w.close()
 
 
@@ -130,7 +334,7 @@ def test_mainwindow_mcu_combo_live():
     _app()
     p = ProjectModel(REF)
     w = MainWindow(p)
-    assert w.mcu_combo.count() >= 2  # atmega328p, atmega2560
+    assert w.mcu_combo.count() >= 2  # atmega328p, atmega2560 (chips)
     w._on_mcu_changed("atmega2560")
     assert p.mcu == "atmega2560"
     w.close()

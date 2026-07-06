@@ -50,6 +50,7 @@ class Signal:
     ctype: str         # rtw type, e.g. "uint16_T"
     direction: str     # "in" | "out" | "?" (unknown prefix)
     dim: int = 1       # array length; 1 == scalar
+    description: str = ""  # hand-authored ASW only -> emitted as a C comment
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class Calibration:
     ctype: str         # rtw type for extern params; "" for #define macros
     kind: str          # "extern" (ExportToFile) | "define" (Define)
     value: str = ""    # macro value for kind == "define"
+    description: str = ""  # hand-authored ASW only -> emitted as a C comment
 
 
 @dataclass(frozen=True)

@@ -27,11 +27,13 @@ import argparse
 import sys
 from pathlib import Path
 
+from .asw import resolve_asw_tasks
 from .constants import MAIN_C, __version__
 from .diagnostics import Diagnostics
 from .emit import (emit_asw_skeleton, emit_config_c, emit_config_h,
                    emit_main_skeleton, emit_makefile, emit_os_gen_h,
                    emit_rte_c, emit_rte_cfg_h, emit_rte_h)
+from .emit.asw import ASW_FILES
 from .errors import ConfigError
 from .model import System
 from .models import resolve_models
@@ -97,21 +99,28 @@ def main(argv):
         if uses_os_gen:
             outputs.append((app_dir / "os_gen.h", emit_os_gen_h(s), True))
         for t in s.periodic:
-            if t.name in s.model_task_names:
-                continue  # model task body is Task_<model> in the generated Rte.c
+            if t.name in s.rte_task_names:
+                continue  # body is Task_<name> in the generated Rte.c (model/ASW)
             fname = app_dir / f"asw_{t.period_ms}ms.c"
             outputs.append((fname, emit_asw_skeleton(s, t), False))
-        # RTE generation: a models: section emits one combined Rte.h/Rte_Cfg.h/
-        # Rte.c for every model (a Task_<model> per SWC); each is already wired
-        # as an OS task/alarm in config.* by System.
-        if s.models:
-            rsink = Diagnostics(strict=True)  # binding errors are fatal, like config
-            rms = resolve_models(doc, app_dir, rsink)
-            outputs.append((app_dir / "Rte.h", emit_rte_h(rms, src.name), True))
+        # Hand-authored ASW tasks: emit each one's <name>{,_Intfc,_Param} skeleton
+        # (the runnable body once-only, the interface/param regenerated).
+        rsink = Diagnostics(strict=True)   # binding errors are fatal, like config
+        asw_rms = resolve_asw_tasks(doc, rsink)
+        for rm in asw_rms:
+            for suffix, emit_fn, overwrite in ASW_FILES:
+                outputs.append((app_dir / f"{rm.name}{suffix}",
+                                emit_fn(rm, src.name), overwrite))
+        # RTE generation: codegen models and hand ASW tasks share one combined
+        # Rte.h/Rte_Cfg.h/Rte.c (a Task_<name> per SWC); each is already wired as
+        # an OS task/alarm in config.* by System.
+        rte_rms = (resolve_models(doc, app_dir, rsink) if s.models else []) + asw_rms
+        if rte_rms:
+            outputs.append((app_dir / "Rte.h", emit_rte_h(rte_rms, src.name), True))
             outputs.append((app_dir / "Rte_Cfg.h",
-                            emit_rte_cfg_h(rms, src.name), True))
+                            emit_rte_cfg_h(rte_rms, src.name), True))
             outputs.append((app_dir / "Rte.c",
-                            emit_rte_c(rms, src.name, integrated=True), True))
+                            emit_rte_c(rte_rms, src.name, integrated=True), True))
     except ConfigError as e:
         print(e)
         return 1

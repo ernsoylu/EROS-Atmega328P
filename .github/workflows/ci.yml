@@ -80,6 +80,15 @@ jobs:
           git diff --exit-code tools/fixtures/model_app/
           make -C tools/fixtures/model_app all
 
+      - name: "Hand-authored ASW task end-to-end (generate, no drift, build)"
+        run: |
+          # A task with a ports:/calibrations: interface emits its six-file
+          # <name>{,_Intfc,_Param} skeleton and joins the RTE; regeneration must
+          # match the committed golden, and the firmware must build -Werror.
+          python3 tools/erosgen.py tools/fixtures/asw_task/app.yaml
+          git diff --exit-code tools/fixtures/asw_task/
+          make -C tools/fixtures/asw_task all
+
   # -------------------------------------------------------------------
   # Stage 2 - execute peripheral drivers in simavr and assert behaviour.
   # -------------------------------------------------------------------

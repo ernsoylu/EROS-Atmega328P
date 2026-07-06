@@ -1,0 +1,26 @@
+# End-to-end fixture: a complete app whose only work is a HAND-AUTHORED ASW task
+# (a task with a ports:/calibrations: interface, authored here instead of code-
+# generated). Running `erosgen` emits config.*, Makefile, main.c, os_gen.h,
+# Rte.{h,c}/Rte_Cfg.h AND the six-file skeleton knob{,_Intfc,_Param}.{c,h}, with
+# `knob` wired as TASK_KNOB / ALARM_KNOB. The committed generated files are
+# golden snapshots; regenerate, never edit:
+#   uv run python tools/erosgen.py tools/fixtures/asw_task/app.yaml
+system:
+  name: knobdemo
+  kernel_dir: ../../../kernel
+  drivers_dir: ../../../drivers
+  hooks: { startup: true, error: true, shutdown: true }
+
+tasks:
+  - { name: init, autostart: true, wcet_ms: 2 }    # arms the alarm
+  - name: knob                                      # hand-authored ASW task
+    period_ms: 10
+    wcet_ms: 2
+    ports:
+      in:  [{ signal: IN_KnbVal, type: uint16_T,  description: "knob ADC reading", driver: adc, channel: 0 }]
+      out: [{ signal: OUT_Led,   type: boolean_T, description: "status LED",       driver: dio, port: B, bit: 5 }]
+    calibrations:
+      - { name: Knb_Thresh, type: uint16_T, value: 512, description: "on/off threshold" }
+
+resources:
+  - { name: rte, users: [knob] }                    # the task's shared section

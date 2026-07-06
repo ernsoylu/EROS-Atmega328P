@@ -1,0 +1,138 @@
+"""Skeletons for a hand-authored ASW task: <name>{,_Intfc,_Param}.{c,h}.
+
+The file split mirrors the Embedded Coder ASW contract (rte/README_ASW.md) so the
+shared RTE (emit/rte.py) includes <name>.h / <name>_Intfc.h for a hand task
+exactly as for a codegen SWC:
+
+  <name>_Intfc.h/.c   ports as extern globals + their storage (regenerated:
+                      the interface tracks app.yaml)
+  <name>_Param.h/.c   calibrations as tunable globals + their values
+                      (regenerated)
+  <name>.h            init + runnable prototypes (regenerated)
+  <name>.c            the runnable body - written ONCE, then edited freely
+                      (cli.write overwrite=False), never clobbered.
+
+Every emitter is a pure ResolvedModel -> text function (models.py builds the
+ResolvedModel for a hand task via asw.resolve_asw_task).
+"""
+from ..constants import GENERATED_BANNER
+from ..parse.ert import RTW_TYPES
+
+
+def _ctype(rtw):
+    """rtw type -> C stdint type (uint16_T -> uint16_t); pass through unknowns."""
+    info = RTW_TYPES.get(rtw)
+    return info[0] if info else (rtw or "uint8_t")
+
+
+def _guard(name, suffix):
+    return f"{name.upper()}_{suffix}"
+
+
+def _head(fname, src, brief, editable=False):
+    note = ("Generated once by tools/erosgen.py - EDIT FREELY; not overwritten."
+            if editable else GENERATED_BANNER.format(src=src))
+    return ["/**", f" * @file    {fname}", f" * @brief   {brief}", " *",
+            f" * {note}", " */", ""]
+
+
+def _comment(text):
+    return f"   /* {text} */" if text else ""
+
+
+def emit_asw_intfc_h(rm, src):
+    g = _guard(rm.name, "INTFC_H")
+    L = _head(f"{rm.name}_Intfc.h", src, f"Hand-authored ASW ports for '{rm.name}' "
+              "(the RTE reads inputs / writes outputs here).")
+    L += [f"#ifndef {g}", f"#define {g}", "", "#include <stdint.h>", ""]
+    for label, ports in (("Input ports", rm.inputs), ("Output ports", rm.outputs)):
+        if ports:
+            L.append(f"/* {label} */")
+            for p in ports:
+                L.append(f"extern {_ctype(p.signal.ctype)} "
+                         f"{p.signal.name};{_comment(p.signal.description)}")
+            L.append("")
+    L += [f"#endif /* {g} */"]
+    return "\n".join(L) + "\n"
+
+
+def emit_asw_intfc_c(rm, src):
+    L = _head(f"{rm.name}_Intfc.c", src, f"Storage for '{rm.name}' ASW ports.")
+    L += [f'#include "{rm.name}_Intfc.h"', ""]
+    for p in rm.inputs + rm.outputs:
+        L.append(f"{_ctype(p.signal.ctype)} "
+                 f"{p.signal.name};{_comment(p.signal.description)}")
+    return "\n".join(L) + "\n"
+
+
+def emit_asw_param_h(rm, src):
+    g = _guard(rm.name, "PARAM_H")
+    cals = rm.interface.calibrations
+    L = _head(f"{rm.name}_Param.h", src, f"Tunable calibrations for '{rm.name}'.")
+    L += [f"#ifndef {g}", f"#define {g}", "", "#include <stdint.h>", ""]
+    for c in cals:
+        L.append(f"extern {_ctype(c.ctype)} {c.name};{_comment(c.description)}")
+    if not cals:
+        L.append("/* no calibrations declared */")
+    L += ["", f"#endif /* {g} */"]
+    return "\n".join(L) + "\n"
+
+
+def emit_asw_param_c(rm, src):
+    cals = rm.interface.calibrations
+    L = _head(f"{rm.name}_Param.c", src, f"Calibration values for '{rm.name}' "
+              "(edit values in app.yaml).")
+    L += [f'#include "{rm.name}_Param.h"', ""]
+    for c in cals:
+        L.append(f"{_ctype(c.ctype)} {c.name} = "
+                 f"{c.value or 0};{_comment(c.description)}")
+    return "\n".join(L) + "\n"
+
+
+def emit_asw_task_h(rm, src):
+    g = _guard(rm.name, "H")
+    L = _head(f"{rm.name}.h", src, f"Entry points for the '{rm.name}' ASW task.")
+    L += [f"#ifndef {g}", f"#define {g}", "",
+          f"void {rm.init_fn}(void);",
+          f"void {rm.runnable_fn}(void);", "",
+          f"#endif /* {g} */"]
+    return "\n".join(L) + "\n"
+
+
+def emit_asw_task_c(rm, src):
+    """The once-only runnable body (overwrite=False): the developer's algorithm.
+    Lists the ports/params it may touch as a starting comment."""
+    rate = f"{rm.rate_ms} ms" if rm.rate_ms else "aperiodic"
+    L = _head(f"{rm.name}.c", src,
+              f"Hand-authored ASW runnable for '{rm.name}' ({rate}).",
+              editable=True)
+    L += [f'#include "{rm.name}.h"',
+          f'#include "{rm.name}_Intfc.h"',
+          f'#include "{rm.name}_Param.h"', "",
+          f"void {rm.init_fn}(void)", "{",
+          "    /* TODO: one-time init (called once from Rte_Init at startup). */",
+          "}", "",
+          f"/** {rm.name} step: read inputs (IN_*) -> compute -> write outputs "
+          "(OUT_*). */",
+          f"void {rm.runnable_fn}(void)", "{"]
+    for tag, ps in (("inputs", rm.inputs), ("outputs", rm.outputs)):
+        if ps:
+            L.append(f"    /* {tag}: " + ", ".join(p.signal.name for p in ps)
+                     + " */")
+    if rm.interface.calibrations:
+        L.append("    /* params: "
+                 + ", ".join(c.name for c in rm.interface.calibrations) + " */")
+    L += ["    /* TODO: implement. */", "}"]
+    return "\n".join(L) + "\n"
+
+
+# The six files a hand ASW task emits: (suffix, emitter, overwrite?). Only the
+# runnable body is preserved across regenerations.
+ASW_FILES = (
+    ("_Intfc.h", emit_asw_intfc_h, True),
+    ("_Intfc.c", emit_asw_intfc_c, True),
+    ("_Param.h", emit_asw_param_h, True),
+    ("_Param.c", emit_asw_param_c, True),
+    (".h", emit_asw_task_h, True),
+    (".c", emit_asw_task_c, False),
+)

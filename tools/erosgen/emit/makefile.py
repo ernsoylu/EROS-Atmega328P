@@ -60,11 +60,23 @@ def emit_makefile(s, app_dir):
     # builds without hand-editing sources; dedup against any the user
     # listed explicitly (the reference demo lists them for readability).
     asw_files = [f"asw_{t.period_ms}ms.c" for t in s.periodic
-                 if t.name not in s.model_task_names]
+                 if t.name not in s.rte_task_names]
     app_srcs = list(s.sources)
     for f in asw_files + local_drv:
         if f not in app_srcs:
             app_srcs.append(f)
+    # Hand-authored ASW tasks contribute their three sources + Rte.c + the
+    # sources of the drivers their ports bind to (same resolution as a model).
+    for t in s.asw_tasks:
+        for suffix in (".c", "_Intfc.c", "_Param.c"):
+            f = f"{t['name']}{suffix}"
+            if f not in app_srcs:
+                app_srcs.append(f)
+        for fname in model_driver_srcs(t, s.profile):
+            if fname not in ext_drv:
+                ext_drv.append(fname)
+    if s.asw_tasks and "Rte.c" not in app_srcs:
+        app_srcs.append("Rte.c")
     vpath = [s.kernel_dir]
     if ext_drv:
         vpath.append(s.drivers_dir)
