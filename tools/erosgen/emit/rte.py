@@ -184,11 +184,11 @@ def _adapter(port):
                     "{",
                     f"    uint16_t permille = (uint16_t)(({wide})value"
                     f" * RTE_CFG_{tag}_SLOPE + RTE_CFG_{tag}_OFFSET);",
-                    "    PWM_SetDutyPermille(permille);",
+                    "    Pwm_SetDutyCycle(permille);",
                     "}"]
         return [f"static void Rte_Write_{stem}(uint16_t permille)",
                 "{",
-                "    PWM_SetDutyPermille(permille);",
+                "    Pwm_SetDutyCycle(permille);",
                 "}"]
     return [f'#error "RTE emit: driver \'{port.driver}\' '
             f'({port.direction}) not supported yet"']
@@ -239,7 +239,7 @@ def _rte_init(L, rms, multi):
             if port.driver == "adc":
                 L.append("    Adc_Init();")
             elif port.driver == "pwm":
-                L.append("    PWM_Init();")
+                L.append("    Pwm_Init();")
             elif port.driver == "dio":
                 for line in dio_direction_init(port.tag, port.direction == "out"):
                     L.append(f"    {line}")

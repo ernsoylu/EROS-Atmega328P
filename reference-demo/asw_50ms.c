@@ -62,7 +62,7 @@ void Task_Cmd(void)
             (payload[0] == EVT_BUTTON_PRESS))
         {
             Asw_SetRampRun((Asw_GetRampRun() != 0u) ? 0u : 1u);
-            UART_Print_P((Asw_GetRampRun() != 0u) ? PSTR("BTN -> RUN\r\n")
+            Uart_Print_P((Asw_GetRampRun() != 0u) ? PSTR("BTN -> RUN\r\n")
                                                   : PSTR("BTN -> HOLD\r\n"));
         }
         (void)OS_PoolFree(h);
@@ -71,7 +71,7 @@ void Task_Cmd(void)
     /* --- 2. serial command intake. The cap bounds the WCET; 64 (the
      * RX ring size) is the natural upper limit and outruns the wire:
      * 9600 baud delivers at most 48 bytes per 50 ms period. ---------- */
-    for (uint8_t budget = 64u; (budget != 0u) && (UART_GetChar(&c) != 0u); budget--)
+    for (uint8_t budget = 64u; (budget != 0u) && (Uart_GetChar(&c) != 0u); budget--)
     {
         if ((c == '\r') || (c == '\n'))
         {
@@ -80,17 +80,17 @@ void Task_Cmd(void)
                 cmdBuf[cmdLen] = '\0';
                 cmdLen = 0u;
 
-                UART_Print_P(PSTR("\r\n"));
+                Uart_Print_P(PSTR("\r\n"));
                 if (strcmp_P(cmdBuf, PSTR("ON")) == 0)
                 {
                     Asw_SetRampRun(1u);
-                    UART_Print_P(PSTR("ramp ON\r\n"));
+                    Uart_Print_P(PSTR("ramp ON\r\n"));
                 }
                 else if (strcmp_P(cmdBuf, PSTR("OFF")) == 0)
                 {
                     Asw_SetRampRun(0u);
                     Asw_RampReset(); /* duty 0, ramp direction up */
-                    UART_Print_P(PSTR("ramp OFF\r\n"));
+                    Uart_Print_P(PSTR("ramp OFF\r\n"));
                 }
                 else if (strcmp_P(cmdBuf, PSTR("STAT")) == 0)
                 {
@@ -98,13 +98,13 @@ void Task_Cmd(void)
                 }
                 else
                 {
-                    UART_Print_P(PSTR("unknown command\r\n"));
+                    Uart_Print_P(PSTR("unknown command\r\n"));
                 }
             }
         }
         else if ((c >= ' ') && (c <= '~')) /* printable ASCII only */
         {
-            (void)UART_PutChar(c); /* echo */
+            (void)Uart_PutChar(c); /* echo */
             if (cmdLen < (uint8_t)(sizeof(cmdBuf) - 1u))
             {
                 cmdBuf[cmdLen] = c;

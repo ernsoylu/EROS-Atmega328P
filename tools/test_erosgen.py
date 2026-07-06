@@ -428,15 +428,15 @@ def test_pwm_rte_adapter():
     assert DRIVERS["pwm"].vmax == 1000
     assert DRIVERS["pwm"].value_ctype == "uint16_t"
     assert DRIVERS["pwm"].required == ()
-    # a uint16 output bound to pwm emits a PWM_SetDutyPermille adapter, no #error
+    # a uint16 output bound to pwm emits a Pwm_SetDutyCycle adapter, no #error
     port = BoundPort(Signal("OUT_Duty_Pm", "uint16_T", "out"),
                      "out", "pwm", {}, "Duty_Pm")
     rm = ResolvedModel("motor", "motor_initialize", "motor_Runnable", 20,
                        [], [port], None)
     c = emit_rte_c(rm, "app.yaml", integrated=True)
     assert "#error" not in c
-    assert "PWM_SetDutyPermille(permille)" in c
-    assert '#include "pwm.h"' in c and "PWM_Init();" in c
+    assert "Pwm_SetDutyCycle(permille)" in c
+    assert '#include "pwm.h"' in c and "Pwm_Init();" in c
     assert "RTE_CFG_DUTY_PM_SIGNAL" in emit_rte_cfg_h(rm, "app.yaml")
 
 
@@ -514,7 +514,7 @@ def test_rte_scaling_output_pwm():
     assert "static void Rte_Write_Duty_Pc(uint16_t value)" in c
     assert ("uint16_t permille = (uint16_t)((int32_t)value"
             " * RTE_CFG_DUTY_PC_SLOPE + RTE_CFG_DUTY_PC_OFFSET);" in c)
-    assert "PWM_SetDutyPermille(permille);" in c and "#error" not in c
+    assert "Pwm_SetDutyCycle(permille);" in c and "#error" not in c
 
 
 def test_scaling_suppresses_range_truncation():

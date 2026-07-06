@@ -57,14 +57,14 @@ static volatile uint8_t rxBuf[RX_SIZE];
 static volatile uint8_t rxHead;
 static volatile uint8_t rxTail;
 
-void UART_Init(void)
+void Uart_Init(void)
 {
     UBRR0H = (uint8_t)(UART_UBRR >> 8);
     UBRR0L = (uint8_t)UART_UBRR;
     UCSR0A = 0u;                                      /* U2X off        */
     UCSR0C = (uint8_t)((1u << UCSZ01) | (1u << UCSZ00)); /* 8N1         */
     UCSR0B = (uint8_t)((1u << RXEN0) | (1u << TXEN0) | (1u << RXCIE0));
-    /* UDRIE0 is enabled on demand by UART_PutChar(). */
+    /* UDRIE0 is enabled on demand by Uart_PutChar(). */
 }
 
 /** Category 1 ISR: transmit ring drain. */
@@ -94,7 +94,7 @@ ISR(USART_RX_vect)
     }
 }
 
-uint8_t UART_PutChar(char c)
+uint8_t Uart_PutChar(char c)
 {
     uint8_t ok = 1u;
     const uint8_t next = (uint8_t)((txHead + 1u) & TX_MASK);
@@ -119,28 +119,28 @@ uint8_t UART_PutChar(char c)
     return ok;
 }
 
-void UART_Print(const char *s)
+void Uart_Print(const char *s)
 {
     while (*s != '\0')
     {
-        (void)UART_PutChar(*s);
+        (void)Uart_PutChar(*s);
         s++;
     }
 }
 
-void UART_Print_P(PGM_P s)
+void Uart_Print_P(PGM_P s)
 {
     char c = (char)pgm_read_byte(s);
 
     while (c != '\0')
     {
-        (void)UART_PutChar(c);
+        (void)Uart_PutChar(c);
         s++;
         c = (char)pgm_read_byte(s);
     }
 }
 
-void UART_PrintU16(uint16_t value)
+void Uart_PrintU16(uint16_t value)
 {
     char    digits[5]; /* 65535 -> max 5 digits */
     uint8_t n = 0u;
@@ -155,19 +155,19 @@ void UART_PrintU16(uint16_t value)
     while (n != 0u)
     {
         n--;
-        (void)UART_PutChar(digits[n]);
+        (void)Uart_PutChar(digits[n]);
     }
 }
 
-void UART_PrintHex8(uint8_t value)
+void Uart_PrintHex8(uint8_t value)
 {
     static const char hex[16] PROGMEM = "0123456789ABCDEF";
 
-    (void)UART_PutChar((char)pgm_read_byte(&hex[(value >> 4) & 0x0Fu]));
-    (void)UART_PutChar((char)pgm_read_byte(&hex[value & 0x0Fu]));
+    (void)Uart_PutChar((char)pgm_read_byte(&hex[(value >> 4) & 0x0Fu]));
+    (void)Uart_PutChar((char)pgm_read_byte(&hex[value & 0x0Fu]));
 }
 
-uint8_t UART_GetChar(char *c)
+uint8_t Uart_GetChar(char *c)
 {
     uint8_t ok = 0u;
 
@@ -180,7 +180,7 @@ uint8_t UART_GetChar(char *c)
     return ok;
 }
 
-uint8_t UART_TxDropped(void)
+uint8_t Uart_TxDropped(void)
 {
     return txDropped;
 }

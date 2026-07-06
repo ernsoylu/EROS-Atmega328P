@@ -23,27 +23,27 @@ static void drain(void)
 
 int main(void)
 {
-    UART_Init();
+    Uart_Init();
     sei();
 
     /* Exercise the formatting helpers, then the verdict line. Every byte
      * travels ring -> UDRE ISR -> UDR0, which is what we are testing. */
-    UART_Print("uart u16=");
-    UART_PrintU16(12345u);
-    UART_Print(" hex=");
-    UART_PrintHex8(0xB7u);
-    UART_PutChar('\n');
+    Uart_Print("uart u16=");
+    Uart_PrintU16(12345u);
+    Uart_Print(" hex=");
+    Uart_PrintHex8(0xB7u);
+    Uart_PutChar('\n');
     drain();
 
     /* A bounded print must not have dropped anything (ring >= message). */
-    if (UART_TxDropped() != 0u)
+    if (Uart_TxDropped() != 0u)
     {
-        UART_Print("EROS-TEST: FAIL tx-dropped\n");
+        Uart_Print("EROS-TEST: FAIL tx-dropped\n");
         drain();
         for (;;) { /* halt */ }
     }
 
-    UART_Print("EROS-TEST: PASS\n");
+    Uart_Print("EROS-TEST: PASS\n");
     drain();
 
     for (;;) { /* halt */ }

@@ -7,11 +7,11 @@
  * would stall every other task, so this driver is fully
  * interrupt-driven and non-blocking:
  *
- *   TX: UART_PutChar()/UART_Print*() enqueue into a ring buffer; the
+ *   TX: Uart_PutChar()/Uart_Print*() enqueue into a ring buffer; the
  *       USART_UDRE ISR drains it in the background. If the ring is full
  *       the byte is DROPPED (and counted) - a task never busy-waits.
  *   RX: the USART_RX ISR captures bytes into a second ring; tasks poll
- *       with UART_GetChar().
+ *       with Uart_GetChar().
  *
  * ISR category (OSEK): both UART ISRs are Category 1 - they touch only
  * the rings and the UART hardware and MUST NOT call any OS service.
@@ -34,29 +34,29 @@
 
 /** Initialise 9600 8N1, RX interrupt enabled, TX ring idle.
  *  Call with interrupts disabled (e.g. from StartupHook()). */
-void UART_Init(void);
+void Uart_Init(void);
 
 /** Enqueue one byte for background transmission.
  *  @return 1 = queued, 0 = ring full (byte dropped and counted). */
-uint8_t UART_PutChar(char c);
+uint8_t Uart_PutChar(char c);
 
 /** Enqueue a RAM string. */
-void UART_Print(const char *s);
+void Uart_Print(const char *s);
 
 /** Enqueue a PROGMEM string (use with PSTR("...")). */
-void UART_Print_P(PGM_P s);
+void Uart_Print_P(PGM_P s);
 
 /** Enqueue an unsigned 16-bit value in decimal. */
-void UART_PrintU16(uint16_t value);
+void Uart_PrintU16(uint16_t value);
 
 /** Enqueue an 8-bit value as two hex digits. */
-void UART_PrintHex8(uint8_t value);
+void Uart_PrintHex8(uint8_t value);
 
 /** Fetch one received byte if available.
  *  @return 1 = *c valid, 0 = RX ring empty. */
-uint8_t UART_GetChar(char *c);
+uint8_t Uart_GetChar(char *c);
 
 /** Number of TX bytes dropped because the ring was full (diagnostic). */
-uint8_t UART_TxDropped(void);
+uint8_t Uart_TxDropped(void);
 
 #endif /* UART_H */
