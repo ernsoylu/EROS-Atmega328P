@@ -1008,3 +1008,65 @@ class ProjectModel:
                     add(f"P{p}{b}")
         pins.sort(key=lambda d: (d["port"], d["bit"]))
         return pins
+
+
+class WorkspaceModel:
+    """A loaded erosproject.yaml: its app list + variants, and a generate-all.
+
+    A GUI-agnostic bridge over erosgen.workspace, mirroring ProjectModel: the UI
+    lists the apps (each opened into the normal single-app editor) and runs the
+    whole workspace through the engine with an optional variant overlay.
+    """
+
+    def __init__(self, path=None):
+        self.path = None
+        self.doc = {}
+        if path is not None:
+            self.load(path)
+
+    @staticmethod
+    def is_workspace_file(path):
+        """True if `path` is an erosproject.yaml (a doc with an apps: list)."""
+        from erosgen.workspace import is_workspace
+        try:
+            return is_workspace(_yaml.load(Path(path).read_text()) or {})
+        except (OSError, ValueError):
+            return False
+
+    def load(self, path):
+        from erosgen.workspace import is_workspace
+        p = Path(path)
+        doc = _yaml.load(p.read_text()) or {}
+        if not is_workspace(doc):
+            raise ValueError(f"{p.name}: not a workspace (needs an 'apps:' list)")
+        self.path = p
+        self.doc = doc
+
+    @property
+    def name(self):
+        return self.doc.get("name", self.path.stem if self.path else "")
+
+    def variants(self):
+        return sorted((self.doc.get("variants") or {}).keys())
+
+    def apps(self):
+        """[(as-written, resolved absolute Path)] for each listed app."""
+        out = []
+        base = self.path.parent if self.path else Path(".")
+        for entry in (self.doc.get("apps") or []):
+            rel = entry if isinstance(entry, str) else (entry or {}).get("path")
+            if rel:
+                out.append((rel, (base / rel).resolve()))
+        return out
+
+    def generate(self, variant=None):
+        """Run the whole workspace through the engine. Returns (ok, report)."""
+        if self.path is None:
+            raise ValueError("open a workspace before generating")
+        argv = ["erosgen", str(self.path)]
+        if variant:
+            argv += ["--variant", variant]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = erosgen.main(argv)
+        return rc == 0, buf.getvalue()

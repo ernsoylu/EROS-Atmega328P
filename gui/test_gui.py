@@ -723,3 +723,60 @@ def test_mainwindow_diagnostic_double_click_opens_source(monkeypatch):
     assert opened.get("path", "").endswith(".yaml")
     w.close()
     os.unlink(bad)
+
+
+def _make_workspace(tmp_path, variants=True):
+    """Write a temp erosproject.yaml + two copied app.yamls (so a Generate All
+    that saves the open app never touches a committed fixture)."""
+    import shutil
+    apps = []
+    for i, src in enumerate((REF, MODEL_APP)):
+        sub = tmp_path / f"app{i}"
+        shutil.copytree(src.parent, sub)
+        apps.append(sub / "app.yaml")
+    wf = tmp_path / "erosproject.yaml"
+    v = ("variants:\n  release: { system: { hooks: { error: true } } }\n"
+         if variants else "")
+    wf.write_text("name: prod\n" + v + "apps:\n"
+                  + "".join(f"  - {a}\n" for a in apps))
+    return wf, apps
+
+
+def test_workspacemodel_load_and_apps(tmp_path):
+    from gui.project import WorkspaceModel
+    wf, apps = _make_workspace(tmp_path)
+    assert WorkspaceModel.is_workspace_file(wf)
+    assert not WorkspaceModel.is_workspace_file(REF)      # a plain app.yaml
+    ws = WorkspaceModel(wf)
+    assert ws.name == "prod"
+    assert ws.variants() == ["release"]
+    assert [str(p) for _, p in ws.apps()] == [str(a.resolve()) for a in apps]
+
+
+def test_workspacemodel_rejects_plain_app():
+    from gui.project import WorkspaceModel
+    try:
+        WorkspaceModel(REF)
+        raise AssertionError("expected ValueError for a non-workspace file")
+    except ValueError as e:
+        assert "apps" in str(e)
+
+
+def test_mainwindow_open_workspace_and_generate(tmp_path):
+    from gui.main_window import MainWindow
+    _app()
+    wf, _ = _make_workspace(tmp_path)
+    w = MainWindow(ProjectModel())
+    w.open_workspace(str(wf))                              # path passed (no dialog)
+    assert not w.ws_bar.isHidden()
+    assert w.ws_apps.count() == 2
+    assert w.ws_variant.count() == 2                       # "(none)" + release
+    assert w.project.name == "eros"                        # first app loaded
+    w._on_ws_app(1)
+    assert w.project.name == "knbdemo"                     # switched to second
+    w.ws_variant.setCurrentIndex(1)                        # select release
+    w.generate_workspace()                                 # runs whole workspace
+    # both apps generated their config.h under the temp copies
+    assert (tmp_path / "app0" / "config.h").exists()
+    assert (tmp_path / "app1" / "config.h").exists()
+    w.close()

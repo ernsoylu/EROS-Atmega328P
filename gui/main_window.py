@@ -37,9 +37,11 @@ class MainWindow(QMainWindow):
         self.proc = None
         self._sel = ("system",)      # which node the right panel is showing
         self.mcu_combo = None        # (re)created by the System page
+        self.workspace = None   # a WorkspaceModel when an erosproject.yaml is open
         self._build_ui()
         self._build_menu()
         self._build_toolbar()
+        self._build_workspace_bar()
         self.refresh()
 
     def install_excepthook(self):
@@ -121,6 +123,7 @@ class MainWindow(QMainWindow):
         filem = self.menuBar().addMenu("&File")
         for text, slot in (("&New Project…", self.new_project),
                            ("&Open…", self.open_project),
+                           ("Open &Workspace…", self.open_workspace),
                            ("&Save", self.save_project),
                            ("Save &As…", self.save_as),
                            ("&Generate", self.generate),
@@ -150,6 +153,27 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         for text, slot in (("Generate", self.generate), ("Build", self.build)):
             tb.addAction(text).triggered.connect(slot)
+
+    def _build_workspace_bar(self):
+        """A second toolbar shown only when an erosproject.yaml is open: the app
+        picker (each opens into the normal editor), the variant selector, and
+        Generate All (runs the whole workspace through the engine)."""
+        self.addToolBarBreak()
+        self.ws_bar = self.addToolBar("Workspace")
+        self.ws_bar.setMovable(False)
+        self.ws_name = QLabel("")
+        self.ws_apps = QComboBox()
+        self.ws_variant = QComboBox()
+        self.ws_bar.addWidget(QLabel(" Workspace: "))
+        self.ws_bar.addWidget(self.ws_name)
+        self.ws_bar.addWidget(QLabel("   App: "))
+        self.ws_bar.addWidget(self.ws_apps)
+        self.ws_bar.addWidget(QLabel("   Variant: "))
+        self.ws_bar.addWidget(self.ws_variant)
+        self.ws_bar.addAction("Generate All").triggered.connect(
+            self.generate_workspace)
+        self.ws_apps.activated.connect(self._on_ws_app)
+        self.ws_bar.setVisible(False)
 
     # ---- view refresh ---------------------------------------------------
     def refresh(self):
@@ -1131,6 +1155,58 @@ class MainWindow(QMainWindow):
             self._sel = ("system",)
             self._log(f"opened {fn}")
             self.refresh()
+
+    def open_workspace(self, fn=None):
+        """Open an erosproject.yaml: populate the workspace bar and load its first
+        app into the editor. `fn` is the path (a dialog is shown when omitted)."""
+        from gui.project import WorkspaceModel
+        if not fn:
+            fn, _ = QFileDialog.getOpenFileName(
+                self, "Open erosproject.yaml", "", "YAML (*.yaml *.yml)")
+        if not fn:
+            return
+        try:
+            ws = WorkspaceModel(fn)
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, "Open Workspace", str(e))
+            return
+        self.workspace = ws
+        self.ws_name.setText(ws.name)
+        self.ws_apps.clear()
+        for rel, ap in ws.apps():
+            self.ws_apps.addItem(rel, str(ap))
+        self.ws_variant.clear()
+        self.ws_variant.addItem("(none)", "")
+        for v in ws.variants():
+            self.ws_variant.addItem(v, v)
+        self.ws_bar.setVisible(True)
+        self._log(f"opened workspace '{ws.name}' — {len(ws.apps())} app(s)")
+        if ws.apps():
+            self._on_ws_app(0)
+
+    def _on_ws_app(self, idx):
+        """Workspace app picker changed: load that app.yaml into the editor."""
+        ap = self.ws_apps.itemData(idx)
+        if ap:
+            self.project.load(ap)
+            self._sel = ("system",)
+            self._log(f"editing {ap}")
+            self.refresh()
+
+    def generate_workspace(self):
+        """Generate every app in the workspace with the selected variant overlay."""
+        if not self.workspace:
+            return
+        if self.project.path:
+            self.project.save()   # flush edits to the app currently open
+        variant = self.ws_variant.currentData() or None
+        self.tabs.setCurrentWidget(self.console)
+        self._log(f"$ erosgen {self.workspace.path.name}"
+                  + (f" --variant {variant}" if variant else ""))
+        ok, report = self.workspace.generate(variant)
+        self._log(report.rstrip())
+        self._log("generate all: OK" if ok else "generate all: FAILED")
+        self.refresh()
 
     def save_project(self):
         if self.project.path:

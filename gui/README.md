@@ -52,13 +52,18 @@ along the bottom.
   editing stays in the conflict-aware pickers; the map is `ProjectModel.pinout()`,
   so it re-derives live on every edit/retarget.
 - **Menus**
-  - **File** — New Project… · Open… · Save · Save As… · Generate · Build · Exit
+  - **File** — New Project… · Open… · **Open Workspace…** · Save · Save As… ·
+    Generate · Build · Exit
   - **Edit** — Add Task… · Add **Codegen** Task… · Add **Resource…** · Remove
     Selected
   - **Help** — About
 
   Port binding is **not** a menu — it is inline on the selected model/ASW-task
   page. (The old read-only "Model" menu is gone.)
+- **Workspaces** — *Open Workspace…* opens an `erosproject.yaml`; a second
+  toolbar shows the workspace name, an **App** picker (each opens into the normal
+  editor), a **Variant** selector, and **Generate All** (runs every app through
+  the engine with the selected variant overlay). A plain `app.yaml` is unaffected.
 - **YAML** is round-tripped with `ruamel.yaml`, so comments and key order
   survive a Save (flow-map inner spacing may normalize — a ruamel default, not
   comment loss). "Once" files are never clobbered.
