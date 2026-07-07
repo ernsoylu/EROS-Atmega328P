@@ -1639,6 +1639,26 @@ def test_atmega328p_makefile_has_no_tick_define():
     assert "EROS_TICK_TIMER" not in mk
 
 
+def test_startup_hook_off_still_inits_drivers():
+    """Regression: hooks.startup:false must NOT drop the generated GPIO/driver/RTE
+    init. Board_ConfigurePins() (its normal home is StartupHook) moves into the
+    autostart task, before arming alarms - otherwise a startup:false project never
+    initialises its peripherals (e.g. the ADC stays disabled and a bound read
+    busy-waits forever -> watchdog reset loop)."""
+    from erosgen.emit import emit_main_skeleton
+    yml = ("system: { name: t, mcu: atmega328p, hooks: { startup: %s } }\n"
+           "tasks:\n  - { name: ctrl, period_ms: 10, wcet_ms: 1 }\n"
+           "resources: [{ name: r, users: [ctrl] }]\n")
+    off = emit_main_skeleton(_system(yml % "false"))
+    assert "void StartupHook" not in off                 # hook is disabled
+    assert off.count("Board_ConfigurePins()") == 1       # but init still runs...
+    assert off.index("Board_ConfigurePins()") < off.index("OS_StartAlarms()")
+    # ...and with the hook ON it lives in StartupHook, not duplicated in the task
+    on = emit_main_skeleton(_system(yml % "true"))
+    assert "void StartupHook" in on
+    assert on.count("Board_ConfigurePins()") == 1
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
