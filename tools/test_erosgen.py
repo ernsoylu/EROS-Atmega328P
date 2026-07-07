@@ -1378,6 +1378,21 @@ def test_docs_peripheral_names_are_real():
     assert not unknown, f"tools/README names peripherals not in the profile: {unknown}"
 
 
+def test_backend_protocol():
+    """The AVR backend implements the Backend protocol and is what the emitters
+    read via for_profile(); its idioms match the free functions byte-for-byte, so
+    the refactor to an interface changes no generated output."""
+    from erosgen.backends import (AVR, AvrBackend, Backend, bit_set,
+                                  dio_direction_init, for_profile)
+    from erosgen.mcu.profile import load_profile
+    be = for_profile(load_profile("atmega328p"))
+    assert isinstance(be, AvrBackend) and be.name == "avr"
+    assert isinstance(be, Backend)                    # structural conformance
+    assert be.bit_set("DDRB", "PB5") == bit_set("DDRB", "PB5")
+    assert be.dio_direction_init("X", True) == dio_direction_init("X", True)
+    assert for_profile() is AVR                       # AVR is the default
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

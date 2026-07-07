@@ -37,3 +37,23 @@ def dio_direction_init(tag, is_output):
         return [f"{ddr}  |= (uint8_t)(1u << {bit});",
                 f"{prt} &= (uint8_t)~(1u << {bit});"]
     return [f"{ddr}  &= (uint8_t)~(1u << {bit});"]
+
+
+class AvrBackend:
+    """The AVR family backend (DDRx/PORTx/PINx idioms) — implements `Backend`.
+    Methods delegate to the module functions above, which stay available for
+    direct import."""
+
+    name = "avr"
+
+    def bit_set(self, reg, bit):
+        return bit_set(reg, bit)
+
+    def bit_clear(self, reg, bit):
+        return bit_clear(reg, bit)
+
+    def bit_read(self, reg, bit):
+        return bit_read(reg, bit)
+
+    def dio_direction_init(self, tag, is_output):
+        return dio_direction_init(tag, is_output)

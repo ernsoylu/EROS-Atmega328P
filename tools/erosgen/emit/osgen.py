@@ -4,7 +4,7 @@ Kept in lockstep with the YAML so adding a task/pin propagates into the build
 without editing hand-written main.c (the regeneration-drift fix).
 """
 
-from ..backends import bit_clear, bit_set
+from ..backends import for_profile
 from ..constants import GENERATED_BANNER, INCLUDE_EROS_H
 
 
@@ -28,6 +28,7 @@ def emit_os_gen_h(s):
     setup (from gpio + peripheral inits) and alarm arming. main.c calls
     these so adding a task/pin in the YAML propagates without editing
     hand-written code (the regeneration-drift fix)."""
+    be = for_profile(s.profile)      # the code-gen backend (AVR register idioms)
     L = []
     L.append("/**")
     L.append(" * @file    os_gen.h")
@@ -59,15 +60,15 @@ def emit_os_gen_h(s):
         bit = g["pin"]          # e.g. PB5 - avr-libc defines the bit index
         label = g["name"] or g["pin"]
         if g["dir"] == "out":
-            L.append(f"    {bit_set(f'DDR{port}', bit)};  /* {label} output */")
+            L.append(f"    {be.bit_set(f'DDR{port}', bit)};  /* {label} output */")
             if g["init"]:
-                L.append(f"    {bit_set(f'PORT{port}', bit)};")
+                L.append(f"    {be.bit_set(f'PORT{port}', bit)};")
             else:
-                L.append(f"    {bit_clear(f'PORT{port}', bit)};")
+                L.append(f"    {be.bit_clear(f'PORT{port}', bit)};")
         else:
-            L.append(f"    {bit_clear(f'DDR{port}', bit)};  /* {label} input */")
+            L.append(f"    {be.bit_clear(f'DDR{port}', bit)};  /* {label} input */")
             if g["pullup"]:
-                L.append(f"    {bit_set(f'PORT{port}', bit)};  /* pull-up */")
+                L.append(f"    {be.bit_set(f'PORT{port}', bit)};  /* pull-up */")
     for p in sorted(s.peripherals):
         if p in s.profile.driver_init:
             L.append(f"    {_driver_init_call(s, p)}")

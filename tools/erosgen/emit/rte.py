@@ -7,9 +7,11 @@ T0Pwm_ for the pwm/timer0_pwm outputs. Ports with a driver this emitter doesn't
 handle yet produce a visible #error.
 """
 
-from ..backends import bit_clear, bit_read, bit_set, dio_direction_init
+from ..backends import for_profile
 from ..constants import GENERATED_BANNER
 from ..parse.ert import RTW_TYPES
+
+_BE = for_profile()   # code-gen backend (AVR register idioms); one family
 
 _DRIVER_HEADER = {"adc": "adc.h", "pwm": "pwm.h",
                   "timer0_pwm": "timer0_pwm.h"}  # dio uses raw avr/io.h
@@ -164,18 +166,18 @@ def _adapter(port):
     if port.driver == "dio" and port.direction == "in":
         return [f"static uint8_t Rte_Read_{stem}(void)",
                 "{",
-                f"    return {bit_read(f'RTE_CFG_{tag}_PIN', f'RTE_CFG_{tag}_BIT')};",
+                f"    return {_BE.bit_read(f'RTE_CFG_{tag}_PIN', f'RTE_CFG_{tag}_BIT')};",
                 "}"]
     if port.driver == "dio" and port.direction == "out":
         return [f"static void Rte_Write_{stem}(uint8_t on)",
                 "{",
                 "    if (on)",
                 "    {",
-                f"        {bit_set(f'RTE_CFG_{tag}_PORT', f'RTE_CFG_{tag}_BIT')};",
+                f"        {_BE.bit_set(f'RTE_CFG_{tag}_PORT', f'RTE_CFG_{tag}_BIT')};",
                 "    }",
                 "    else",
                 "    {",
-                f"        {bit_clear(f'RTE_CFG_{tag}_PORT', f'RTE_CFG_{tag}_BIT')};",
+                f"        {_BE.bit_clear(f'RTE_CFG_{tag}_PORT', f'RTE_CFG_{tag}_BIT')};",
                 "    }",
                 "}"]
     if port.driver == "pwm" and port.direction == "out":
@@ -295,7 +297,7 @@ def _rte_init(L, rms, multi):
             elif port.driver == "timer0_pwm":
                 L.append("    T0Pwm_Init();")
             elif port.driver == "dio":
-                for line in dio_direction_init(port.tag, port.direction == "out"):
+                for line in _BE.dio_direction_init(port.tag, port.direction == "out"):
                     L.append(f"    {line}")
         L.append("")
         L.append("    /* ASW init. */")

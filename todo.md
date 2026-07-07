@@ -290,7 +290,13 @@ grid** does not.
 (`pin_init/read/write`, `progmem`, `toolchain`) so the emitters read a backend
 interface instead of importing `backends.avr` directly — a cleaner seam even
 while AVR is the only backend.
-- [ ] `Backend` protocol; emitters read it instead of importing `backends.avr`.
+- [x] **`Backend` protocol** (done): `backends/base.Backend` (a runtime-checkable
+      Protocol) + `AvrBackend` implementing the register/GPIO idioms
+      (`bit_set/clear/read`, `dio_direction_init`); `backends.for_profile()`
+      returns the backend (AVR is the only family). The emitters (`emit/osgen.py`,
+      `emit/rte.py`) read the backend interface instead of importing loose
+      functions. Byte-identical generated output (no golden drift); the free
+      functions stay for direct use.
 
 ### Phase 11 — ASW parser robustness + interchange
 Regex parser is tied to the ExportToFile/Define storage-class contract.
