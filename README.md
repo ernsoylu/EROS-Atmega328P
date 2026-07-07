@@ -67,6 +67,9 @@ tests/                simavr simulation tests (on-chip self-checks + a libsimavr
                       kept frozen; README.md documents model config + data types
   model/              the Simulink project itself (.slx/.sldd + test harness)
                       that generates codegen/ (caches under cache/, gitignored)
+simulink/             git SUBMODULE (ernsoylu/EROS-AVR-Codegen): the MATLAB /
+                      Simulink side. Optional — the firmware builds without it;
+                      clone with --recursive (or `git submodule update --init`)
 .github/workflows/    CI: build+budget, simavr peripheral/model matrix,
                       qemu boot smoke — see "Continuous integration" below
 ```
