@@ -94,10 +94,12 @@ source of truth before adding features.
       **Generation & overwrite policy** heading over the overwrite table, and
       `README.md` points to it and states `config.*`/`Makefile`/`os_gen.h`/`Rte.*`
       are overwritten while `main.c`/`asw_*.c` are once-only.
-- [ ] **Docs-drift guard (optional, cheap)** — a CI check or test that asserts a
-      few load-bearing doc facts against code (e.g. the peripheral list in
-      `gui/README.md` ⊆ `validate.ALLOWED_KEYS`, the overwrite table matches
-      `cli.py`). Prevents the next fetch-based review from being wrong.
+- [x] **Docs-drift guard** (done): `test_docs_overwrite_policy_matches_generator`
+      parses the tools/README overwrite table and asserts each file's
+      always/once semantics matches the generator; `test_docs_peripheral_names_are_real`
+      asserts the doc's app.yaml peripherals are a subset of the MCU profile. Runs
+      in the engine suite (CI), so a future fetch-based review can't be misled by a
+      stale doc.
 
 ---
 

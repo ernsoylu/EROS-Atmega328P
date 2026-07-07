@@ -1343,6 +1343,41 @@ resources: [{ name: r, users: [init] }]
     assert slow.period_ms == 100 and slow.entry == "Task_swc_Slow"
 
 
+def test_docs_overwrite_policy_matches_generator():
+    """Docs-drift guard (Phase 4): the tools/README 'Generation & overwrite
+    policy' table must state each generated file with the semantics cli.write
+    actually uses — 'always' for derived artifacts, 'once' for user skeletons —
+    so a fetch-based reader can't be misled by a stale table."""
+    import re
+    truth = {"config.h": "always", "config.c": "always", "Makefile": "always",
+             "os_gen.h": "always", "main.c": "once", "asw_<rate>ms.c": "once"}
+    readme = (REPO / "tools" / "README.md").read_text()
+    rows = {m.group(1): m.group(2)
+            for m in re.finditer(r"\|\s*`([^`]+)`\s*\|\s*(always|once)", readme)}
+    assert "config.h" in rows and "main.c" in rows, \
+        "tools/README overwrite table missing or renamed"
+    for f, sem in truth.items():
+        if f in rows:
+            assert rows[f] == sem, \
+                f"tools/README: {f} documented '{rows[f]}', generator is '{sem}'"
+
+
+def test_docs_peripheral_names_are_real():
+    """Docs-drift guard: every peripheral named in the tools/README app.yaml
+    example must be a real known peripheral (subset of the MCU profile), so the
+    doc can't advertise one the tool doesn't have."""
+    import re
+
+    from erosgen.mcu.profile import load_profile
+    known = set(load_profile("atmega328p").known_peripherals)
+    readme = (REPO / "tools" / "README.md").read_text()
+    m = re.search(r"\nperipherals:.*\n((?:\s{2,}\w+:.*\n)+)", readme)
+    assert m, "tools/README has no peripherals: example block"
+    names = re.findall(r"^\s{2,}(\w+):", m.group(1), re.M)
+    unknown = [n for n in names if n not in known]
+    assert not unknown, f"tools/README names peripherals not in the profile: {unknown}"
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
