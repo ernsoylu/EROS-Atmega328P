@@ -93,17 +93,37 @@ def resolve_model(mspec, app_dir, sink):
     if not name:
         sink.error("MODEL_NO_NAME", "model: needs a 'name'", "models")
         return None
+    swc = mspec.get("swc")
     codegen_dir = mspec.get("codegen_dir")
-    if not codegen_dir:
-        sink.error("MODEL_NO_CODEGEN", f"{where}: needs 'codegen_dir'", where)
+    if not swc and not codegen_dir:
+        sink.error("MODEL_NO_CODEGEN",
+                   f"{where}: needs 'codegen_dir' (Embedded Coder) or 'swc' "
+                   "(a hand-authored swc.yaml)", where)
         return None
     if mspec.get("rate_ms") is None:
         sink.error("MODEL_NO_RATE", f"{where}: needs 'rate_ms'", where)
 
+    # Interchange: swc.yaml (Tier B) or ERT headers via the regex parser (default)
+    # or the pycparser fallback (Tier A, `parser: c`, needs the [parse] extra).
     try:
-        iface = parse_model(Path(app_dir) / codegen_dir, name)
+        if swc:
+            from .parse.swc import parse_swc_yaml
+            iface = parse_swc_yaml(Path(app_dir) / swc, name)
+        elif mspec.get("parser") == "c":
+            from .parse.cparse import available, parse_model_c
+            if not available():
+                sink.error("PARSER_UNAVAILABLE",
+                           f"{where}: parser: c needs the [parse] extra "
+                           "(uv sync --extra parse)", where)
+                return None
+            iface = parse_model_c(Path(app_dir) / codegen_dir, name)
+        else:
+            iface = parse_model(Path(app_dir) / codegen_dir, name)
     except FileNotFoundError as e:
         sink.error("MODEL_NOT_FOUND", str(e), where)
+        return None
+    except ValueError as e:
+        sink.error("MODEL_BAD_SWC", str(e), where)
         return None
 
     init_fn = mspec.get("init", iface.init_fn)

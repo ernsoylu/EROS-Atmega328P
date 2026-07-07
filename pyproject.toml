@@ -16,10 +16,14 @@ gui = ["PySide6>=6.6", "ruamel.yaml>=0.18"]
 # (`erosgen --schema`). The schema is stdlib-loadable JSON, so it drives the
 # dep-free key check without this extra; only running the FULL schema needs it.
 schema = ["jsonschema>=4.18"]
+# Phase 11 Tier A: pycparser-backed ASW parser fallback (models with `parser: c`)
+# for ERT headers that don't fit the regex contract. Core parses via regex.
+parse = ["pycparser>=2.21"]
 
 [dependency-groups]
 dev = [
     "jsonschema>=4.18",
+    "pycparser>=2.21",
     "mypy>=1.19.1",
     "pytest>=8",
     "ruff>=0.15.20",
@@ -50,5 +54,5 @@ files = ["tools/erosgen", "gui"]
 # extras absent from the lint env); treat them as untyped rather than failing
 # the check. PyYAML is covered by types-PyYAML (a dev dep).
 [[tool.mypy.overrides]]
-module = ["ruamel", "ruamel.*", "PySide6.*", "jsonschema", "jsonschema.*"]
+module = ["ruamel", "ruamel.*", "PySide6.*", "jsonschema", "jsonschema.*", "pycparser", "pycparser.*"]
 ignore_missing_imports = true

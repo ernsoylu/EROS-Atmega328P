@@ -1122,8 +1122,8 @@ def test_allowed_keys_derived_from_schema_matches_contract():
         "adc": {"reference", "prescaler", "main_function_ms"},
         "i2c": {"speed_hz", "main_function_ms"},
         "timer0_pwm": {"freq_hz"},
-        "model": {"name", "codegen_dir", "init", "runnable", "rate_ms",
-                  "wcet_ms", "ports", "order", "extra_runnables"},
+        "model": {"name", "codegen_dir", "swc", "parser", "init", "runnable",
+                  "rate_ms", "wcet_ms", "ports", "order", "extra_runnables"},
         "runnable_ref": {"runnable", "rate_ms", "wcet_ms"},
         "ports": {"in", "out"},
         "port": {"signal", "driver", "channel", "port", "bit", "slope",
@@ -1391,6 +1391,50 @@ def test_backend_protocol():
     assert be.bit_set("DDRB", "PB5") == bit_set("DDRB", "PB5")
     assert be.dio_direction_init("X", True) == dio_direction_init("X", True)
     assert for_profile() is AVR                       # AVR is the default
+
+
+def test_parser_tier_b_swc_yaml():
+    """Tier B: a model can supply a hand-authored swc.yaml (interface) instead of
+    a codegen_dir; resolve_models builds the same ModelInterface + RTE."""
+    import tempfile
+    from pathlib import Path
+
+    from erosgen import Diagnostics, resolve_models
+    from erosgen.emit import emit_rte_c
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "knob_swc.yaml").write_text(
+            "name: knob\ninit: knob_initialize\nrunnables: [knob_Runnable]\n"
+            "ports:\n  in:  [{ signal: IN_Knb, type: uint16_T }]\n"
+            "  out: [{ signal: OUT_Led, type: boolean_T }]\n"
+            "calibrations: [{ name: Thresh, type: uint8_T }]\n")
+        doc = {"models": [{
+            "name": "knob", "swc": "knob_swc.yaml", "rate_ms": 10,
+            "runnable": "knob_Runnable",
+            "ports": {"in": [{"signal": "IN_Knb", "driver": "adc", "channel": 0}],
+                      "out": [{"signal": "OUT_Led", "driver": "dio",
+                               "port": "B", "bit": 5}]}}]}
+        sink = Diagnostics(strict=False)
+        rms = resolve_models(doc, Path(tmp), sink)
+        assert [d.message for d in sink.items if d.severity == "error"] == []
+        rm = rms[0]
+        assert rm.init_fn == "knob_initialize" and rm.runnable_fn == "knob_Runnable"
+        assert {p.signal.name for p in rm.inputs} == {"IN_Knb"}
+        c = emit_rte_c(rm, "app.yaml", integrated=True)
+        assert "Adc_ReadChannel" in c and "void Rte_Run_knob(void)" in c
+
+
+def test_parser_tier_a_pycparser_matches_regex():
+    """Tier A: the pycparser fallback (parser: c) reads the same signals/entry
+    points as the regex parser on the reference ERT headers."""
+    from erosgen.parse.cparse import available, parse_model_c
+    if not available():
+        return                                  # [parse] extra absent
+    from erosgen.parse.ert import parse_model
+    d = REPO / "codegen" / "appKnbSwt_ert_rtw"
+    a, b = parse_model(d, "appKnbSwt"), parse_model_c(d, "appKnbSwt")
+    assert {(s.name, s.ctype, s.direction) for s in a.signals} == \
+        {(s.name, s.ctype, s.direction) for s in b.signals}
+    assert a.runnable_fns == b.runnable_fns and a.init_fn == b.init_fn
 
 
 def _run_standalone():

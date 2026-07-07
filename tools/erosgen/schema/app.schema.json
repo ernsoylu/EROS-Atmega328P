@@ -197,6 +197,8 @@
       "properties": {
         "name": {"type": "string", "x-eros-code": "MODEL_NO_NAME"},
         "codegen_dir": {"type": "string"},
+        "swc": {"type": "string"},
+        "parser": {"enum": ["ert", "c"], "x-eros-code": "MODEL_PARSER"},
         "init": {"type": "string"},
         "runnable": {"type": "string"},
         "rate_ms": {"type": "integer"},

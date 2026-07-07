@@ -300,10 +300,17 @@ while AVR is the only backend.
 
 ### Phase 11 — ASW parser robustness + interchange
 Regex parser is tied to the ExportToFile/Define storage-class contract.
-- [ ] Tier A: `pycparser`-backed fallback (`[parse]` extra) for headers that
-      don't follow the contract — keeps the data model unchanged.
-- [ ] Tier B: accept a hand-authored `swc.yaml` (ports/types/runnables) as a
-      first-class alternative to the Embedded Coder round-trip.
+- [x] **Tier A** (done): `parse/cparse.py` — a pycparser-backed fallback
+      (`[parse]` extra; opt in per model with `parser: c`) for the port/param
+      surface, more robust than the regex for multi-line/qualified decls. The
+      full `<model>.h` carries rtw structs needing the whole include tree, so the
+      `void(void)` entry points stay a regex. Same ModelInterface as the regex
+      parser (verified against the reference headers); core stays regex-only.
+- [x] **Tier B** (done): `parse/swc.py` — a hand-authored `swc.yaml`
+      (name/init/runnables/ports/calibrations) is a first-class interface source
+      (`model.swc`), no Embedded Coder needed. Same ModelInterface; verified a
+      swc.yaml model's RTE builds -Werror against real C. Schema `swc`/`parser`
+      fields; opt-in (no golden drift).
 
 ### Phase 12 — Toolchain/project gen + calibration (low priority)
 - [ ] `emit/` also produces `CMakeLists.txt`, VSCode `tasks.json`/
