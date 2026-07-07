@@ -780,3 +780,24 @@ def test_mainwindow_open_workspace_and_generate(tmp_path):
     assert (tmp_path / "app0" / "config.h").exists()
     assert (tmp_path / "app1" / "config.h").exists()
     w.close()
+
+
+def test_mainwindow_suppress_sleep_toggle():
+    """System page 'Build config' toggle flips system.idle sleep<->busy and the
+    engine turns busy into -DEROS_IDLE_BUSY."""
+    from gui.main_window import MainWindow
+    from erosgen.emit.makefile import idle_busy_def
+    import erosgen
+    _app()
+    p = ProjectModel()
+    p.new("demo", "atmega328p")
+    p.add_task("ctrl", period_ms=10, wcet_ms=1)
+    w = MainWindow(p)
+    assert p.idle() == "sleep"                        # default
+    w._set_idle_busy(True)
+    assert p.idle() == "busy"
+    s = erosgen.System(p.plain, Path("app.yaml"))
+    assert idle_busy_def(s) == " -DEROS_IDLE_BUSY"
+    w._set_idle_busy(False)                           # back to default, key dropped
+    assert p.idle() == "sleep" and "idle" not in p._system()
+    w.close()

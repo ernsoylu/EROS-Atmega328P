@@ -60,6 +60,7 @@ along the bottom.
 
   Port binding is **not** a menu — it is inline on the selected model/ASW-task
   page. (The old read-only "Model" menu is gone.)
+- **Build config** (System page) — *Suppress SLEEP instruction (busy-wait idle)* toggles `system.idle` sleep/busy; enable it to run in SimulIDE or single-step debuggers that don't implement `SLEEP`.
 - **Workspaces** — *Open Workspace…* opens an `erosproject.yaml`; a second
   toolbar shows the workspace name, an **App** picker (each opens into the normal
   editor), a **Variant** selector, and **Generate All** (runs every app through

@@ -23,6 +23,8 @@ make config                                 # same, from inside a generated app
 tasks + C/C++ config, and — for apps with SWCs — an ASAP2 `<name>.a2l` describing
 the calibrations/measurements. They are opt-in and never part of the golden set.
 
+**Idle policy.** `system.idle: busy` makes the kernel idle loop spin instead of executing `SLEEP` (emits `-DEROS_IDLE_BUSY`), for simulators/debuggers that don't implement the `SLEEP` instruction (e.g. SimulIDE). Default is `sleep` (low-power `SLEEP_MODE_IDLE`); the GUI exposes it as System → Build config → *Suppress SLEEP instruction*.
+
 **Workspaces (`erosproject.yaml`).** A product line can aggregate several
 `app.yaml`s under one file and share a build posture:
 

@@ -54,6 +54,14 @@ def tick_timer_def(profile):
     return ""
 
 
+def idle_busy_def(s):
+    """The -DEROS_IDLE_BUSY override for the kernel idle policy. Returns
+    " -DEROS_IDLE_BUSY" when system.idle is 'busy' (the idle loop spins instead
+    of executing SLEEP - for simulators/debuggers that don't implement it), else
+    "" so a default 'sleep' project's Makefile (and eros.o) is byte-identical."""
+    return " -DEROS_IDLE_BUSY" if getattr(s, "idle", "sleep") == "busy" else ""
+
+
 def uart_instance_def(profile):
     """The -DUART_USART=<n> override for uart.c's console USART, from the profile's
     `uart_instance`. Returns "" for the USART0 default (328P/2560) so their
@@ -272,7 +280,7 @@ def emit_makefile(s, app_dir):
     L.append("CFLAGS  := -Wall -Wextra -Werror -std=c99 -Os -flto \\")
     L.append("           -ffunction-sections -fdata-sections -fno-common \\")
     L.append(f"           -mmcu=$(MCU) -DF_CPU=$(F_CPU){tick_timer_def(s.profile)}"
-             f"{uart_instance_def(s.profile)}{defs_ref} \\")
+             f"{uart_instance_def(s.profile)}{idle_busy_def(s)}{defs_ref} \\")
     L.append(f"           {' '.join(incs)}")
     L.append("LDFLAGS := -Wl,--gc-sections -Wl,-Map=$(TARGET).map")
     L.append("")

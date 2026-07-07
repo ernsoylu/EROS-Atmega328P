@@ -18,8 +18,8 @@ from pathlib import Path
 
 from ..constants import GENERATED_BANNER
 from .makefile import (_drivers_dir_or_fail, _layer_dir, driver_sources,
-                       model_driver_srcs, periph_defines, tick_timer_def,
-                       uart_instance_def)
+                       idle_busy_def, model_driver_srcs, periph_defines,
+                       tick_timer_def, uart_instance_def)
 
 # The flags every translation unit is compiled with - kept in step with the
 # CFLAGS emit_makefile writes (the guard test compares the two).
@@ -105,8 +105,9 @@ def build_plan(s, app_dir):
     defs = periph_defines(s)
     tick = tick_timer_def(s.profile).split()          # "" or ["-DEROS_TICK_TIMER=3"]
     uart = uart_instance_def(s.profile).split()       # "" or ["-DUART_USART=1"]
+    idle = idle_busy_def(s).split()                   # "" or ["-DEROS_IDLE_BUSY"]
     cflags = (_WARN + _STD + [f"-mmcu={s.profile.mcu_gcc}",
-              f"-DF_CPU={s.profile.f_cpu}"] + tick + uart + defs + incs)
+              f"-DF_CPU={s.profile.f_cpu}"] + tick + uart + idle + defs + incs)
     return {"srcs": srcs, "incs": incs, "defs": defs, "cflags": cflags,
             "app_srcs": app_srcs, "ext_drv": ext_drv, "model_dirs": model_dirs}
 

@@ -450,6 +450,19 @@ class ProjectModel:
     def set_hook(self, name, on):
         self.doc.setdefault("system", {}).setdefault("hooks", {})[name] = bool(on)
 
+    def idle(self):
+        """Kernel idle policy: 'sleep' (default) or 'busy'."""
+        return str(self._system().get("idle", "sleep"))
+
+    def set_idle(self, mode):
+        """Set the idle policy. 'sleep' is the default, so drop the key then to
+        keep the app.yaml minimal; 'busy' suppresses the SLEEP instruction."""
+        sysd = self.doc.setdefault("system", {})
+        if mode == "sleep":
+            sysd.pop("idle", None)
+        else:
+            sysd["idle"] = mode
+
     def system_facts(self):
         """Read-only MCU profile facts for the System page. Best-effort: an
         unknown MCU (no mcu/<name>.yaml) returns {} rather than raising."""

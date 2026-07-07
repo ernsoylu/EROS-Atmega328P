@@ -388,6 +388,19 @@ class MainWindow(QMainWindow):
             hl.addWidget(cb)
         lay.addWidget(hb)
 
+        # Build config: kernel-image options that flow to -D flags.
+        cb_box = QGroupBox("Build config")
+        cl = QVBoxLayout(cb_box)
+        sleep_cb = QCheckBox("Suppress SLEEP instruction (busy-wait idle)")
+        sleep_cb.setChecked(p.idle() == "busy")
+        sleep_cb.setToolTip(
+            "Idle by spinning instead of executing SLEEP. Enable for simulators "
+            "/ debuggers that don't implement SLEEP (e.g. SimulIDE); costs power "
+            "on real hardware. Emits -DEROS_IDLE_BUSY.")
+        sleep_cb.toggled.connect(self._set_idle_busy)
+        cl.addWidget(sleep_cb)
+        lay.addWidget(cb_box)
+
         b = p.budget()
         mb = QGroupBox("Memory (static RAM)")
         ml = QFormLayout(mb)
@@ -892,6 +905,11 @@ class MainWindow(QMainWindow):
 
     def _set_hook(self, name, on):
         self.project.set_hook(name, on)
+        self._defer_refresh()
+
+    def _set_idle_busy(self, on):
+        self.project.set_idle("busy" if on else "sleep")
+        self._log("idle: busy (SLEEP suppressed)" if on else "idle: sleep")
         self._defer_refresh()
 
     def _autodetect_dirs(self):

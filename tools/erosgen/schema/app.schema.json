@@ -28,6 +28,8 @@
         "drivers_dir": {"type": "string"},
         "tick_hz": {"const": 1000, "x-eros-code": "TICK_HZ",
           "description": "Kernel Timer2 is hardware-fixed at 1 kHz."},
+        "idle": {"enum": ["sleep", "busy"], "x-eros-code": "IDLE_MODE",
+          "description": "Idle policy: 'sleep' (default, SLEEP_MODE_IDLE) or 'busy' (spin; for simulators/debuggers that don't implement SLEEP, e.g. SimulIDE)."},
         "alarm_max_offset": {"type": "integer"},
         "stack": {"$ref": "#/$defs/stack"},
         "hooks": {"$ref": "#/$defs/hooks"},

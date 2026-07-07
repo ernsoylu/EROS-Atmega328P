@@ -985,10 +985,20 @@ void StartOS(void)
         cli();
         if (os_readyMask == 0u)
         {
+#if defined(EROS_IDLE_BUSY)
+            /* Busy-idle: skip the SLEEP instruction for simulators/debuggers
+             * that don't implement it (e.g. SimulIDE). A wakeup interrupt sets
+             * os_readyMask and the loop re-tests it on the next pass - no
+             * wakeup is lost (there is no SLEEP to miss). Costs power (the CPU
+             * spins) but keeps the tick ISR + watchdog serviced. Opt in with
+             * `system.idle: busy` in app.yaml. */
+            sei();
+#else
             sleep_enable();
             sei();
             sleep_cpu();
             sleep_disable();
+#endif
         }
         else
         {
@@ -1012,10 +1022,16 @@ void ShutdownOS(StatusType error)
      * hardware reset recovers - see eros.h for the auto-recovery
      * alternative and the ATmegaBOOT boot-loop caveat above. */
     wdt_disable();
+#if defined(EROS_IDLE_BUSY)
+    for (;;)                          /* busy halt: no SLEEP for simulators */
+    {
+    }
+#else
     set_sleep_mode(SLEEP_MODE_PWR_DOWN);
     for (;;)
     {
         sleep_enable();
         sleep_cpu();
     }
+#endif
 }

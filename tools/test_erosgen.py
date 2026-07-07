@@ -1105,7 +1105,7 @@ def test_allowed_keys_derived_from_schema_matches_contract():
     expected = {
         "doc": {"system", "sources", "peripherals", "tasks", "resources",
                 "pool", "gpio", "simulink", "models", "modes"},
-        "system": {"name", "mcu", "kernel_dir", "drivers_dir", "tick_hz",
+        "system": {"name", "mcu", "kernel_dir", "drivers_dir", "tick_hz", "idle",
                    "alarm_max_offset", "stack", "hooks", "budget"},
         "stack": {"canary", "guard_bytes", "paint_margin"},
         "hooks": {"startup", "error", "shutdown"},

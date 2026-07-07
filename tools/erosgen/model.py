@@ -125,6 +125,13 @@ class System:
                        "fixed at 1 kHz; change the kernel to alter it",
                        "system.tick_hz")
         self.tick_ms = 1000 // self.tick_hz if self.tick_hz else 1
+        # Idle policy: "sleep" (default, SLEEP_MODE_IDLE) or "busy" (spin, no
+        # SLEEP instruction) for simulators/debuggers that can't run SLEEP.
+        self.idle = str(sysd.get("idle", "sleep"))
+        if self.idle not in ("sleep", "busy"):
+            sink.error("IDLE_MODE",
+                       "system.idle must be 'sleep' or 'busy'", "system.idle")
+            self.idle = "sleep"
         self.alarm_max_offset = int(sysd.get("alarm_max_offset", 32767))
 
         stack = sysd.get("stack", {})
