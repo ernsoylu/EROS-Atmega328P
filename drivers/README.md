@@ -104,6 +104,18 @@ warning-free compile gate for all drivers (`libdrivers.a` is a
 convenience artifact; apps normally compile driver sources directly so
 LTO and `--gc-sections` see exactly what is used).
 
+### Multi-MCU coverage
+
+`make check-mcus` compiles every driver `-Werror` for **atmega328p, atmega2560
+and atmega32u4** (the CI driver gate runs this). The 32U4 differs in two ways the
+drivers account for: it has no Timer2 (the OS tick lives on Timer3 — see
+`kernel/eros_tick.h`) and only one pin-change bank (PORTB), so `extint.c` guards
+the PORTC/PORTD (`PCINT1/2`) banks behind `#if defined(...)`. Two functional
+notes for the 32U4 (compile-clean, but mind the hardware): `adc.c` reaches ADC
+channels 0–7 (covers the Leonardo A0–A5; ADC8–13 would need `MUX5`), and `uart.c`
+is USART0/console and is provided per-app (the 32U4 uses USART1 — see its
+profile).
+
 ## Concurrency contract (same as the rest of the repo)
 
 Tasks cannot interleave on this non-preemptive kernel, so driver calls

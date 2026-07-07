@@ -1548,6 +1548,24 @@ def test_workspace_end_to_end_generates_each_app():
         assert erosgen.main(["erosgen", str(wf), "--check"]) == 0
 
 
+def test_extint_driver_compiles_for_32u4():
+    """The 32U4 has only one pin-change bank (PORTB); extint.c must still build
+    -Werror there via its PCINT1/2 guards. Skipped when avr-gcc is absent."""
+    import shutil
+    import subprocess
+    import tempfile
+    if shutil.which("avr-gcc") is None:
+        return
+    mcal = REPO / "drivers" / "mcal"
+    with tempfile.TemporaryDirectory() as d:
+        r = subprocess.run(
+            ["avr-gcc", "-Wall", "-Wextra", "-Werror", "-std=c99", "-Os",
+             "-mmcu=atmega32u4", "-DF_CPU=16000000UL", f"-I{mcal}",
+             "-c", str(mcal / "extint.c"), "-o", str(Path(d) / "extint.o")],
+            capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+
+
 def test_atmega32u4_profile_tick_retarget():
     from erosgen.emit.makefile import tick_timer_def
     from erosgen.mcu import load_profile

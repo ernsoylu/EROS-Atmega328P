@@ -76,18 +76,24 @@ ISR(INT1_vect) /* Category 1: no OS service calls */
 /* ------------------------------------------------------------------ */
 
 /** PCMSK0..2 are consecutive only in the register map, not in avr-libc
- *  headers - use an explicit lookup. */
+ *  headers - use an explicit lookup. Banks 1/2 (PORTC/PORTD pin-change) exist
+ *  on the 328P/2560 but NOT the 32U4, whose only pin-change bank is PORTB
+ *  (PCINT0..7); those branches compile out there, so only bank 0 is valid. */
 static volatile uint8_t *PcMsk(uint8_t bank)
 {
     volatile uint8_t *reg = &PCMSK0;
 
     if (bank == 1u)
     {
+#if defined(PCMSK1)
         reg = &PCMSK1;
+#endif
     }
     else if (bank == 2u)
     {
+#if defined(PCMSK2)
         reg = &PCMSK2;
+#endif
     }
     else
     {
@@ -140,14 +146,20 @@ ISR(PCINT0_vect) /* Category 1: no OS service calls */
     CountSaturating(&pcIntCount[0]);
 }
 
+/* Banks 1/2 (PORTC/PORTD) don't exist on the 32U4 - guard the ISRs by vector
+ * availability so the driver still compiles there (bank 0 / PORTB only). */
+#if defined(PCINT1_vect)
 ISR(PCINT1_vect) /* Category 1: no OS service calls */
 {
     pcIntLevel[1] = PINC;
     CountSaturating(&pcIntCount[1]);
 }
+#endif
 
+#if defined(PCINT2_vect)
 ISR(PCINT2_vect) /* Category 1: no OS service calls */
 {
     pcIntLevel[2] = PIND;
     CountSaturating(&pcIntCount[2]);
 }
+#endif

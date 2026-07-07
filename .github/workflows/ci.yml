@@ -56,8 +56,8 @@ jobs:
       - name: Build reference demo + memory budget
         run: make -C reference-demo all
 
-      - name: Driver compile gate (-Werror, all peripherals)
-        run: make -C drivers
+      - name: Driver compile gate (-Werror, all peripherals x all MCU profiles)
+        run: make -C drivers check-mcus
 
       - name: ASW + RTE compile gate (-Werror, generated model untouched)
         run: |

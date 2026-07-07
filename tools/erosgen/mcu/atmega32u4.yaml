@@ -13,9 +13,11 @@
 # USB CDC ComplexDeviceDriver is out of scope. Board silk aliases match the
 # Leonardo header (the Micro shares the pinout; its silk labels differ).
 #
-# Status: with the Timer3 tick retarget the KERNEL builds for the 32U4; the
-# MCAL driver sources (USART1, TWI, ADC register maps) still need a 32U4 port
-# before a peripheral-using app links - the same honest caveat as the 2560.
+# Status: the KERNEL (Timer3 tick) and the MCAL drivers all build -Werror for the
+# 32U4 (`make -C drivers check-mcus`). extint.c guards the PORTC/PORTD pin-change
+# banks the 32U4 lacks; adc.c covers ADC0-7 (Leonardo A0-A5). The remaining gap is
+# the console: `uart.c` is USART0 and app-provided - the 32U4 needs a USART1
+# variant (D0/D1) or a native USB CDC driver (out of scope; see the header note).
 # =====================================================================
 name: atmega32u4
 board: Arduino Leonardo       # friendly board name shown in the GUI board picker
