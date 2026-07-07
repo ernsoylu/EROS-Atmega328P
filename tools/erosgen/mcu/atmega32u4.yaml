@@ -1,0 +1,116 @@
+# =====================================================================
+# ATmega32U4 / Arduino Leonardo + Micro hardware profile for erosgen.
+#
+# Unlike the ATmega2560 (a same-family profile drop-in), the 32U4 needs a
+# small KERNEL retarget because it has NO Timer2 - the EROS 1 kHz tick moves
+# to Timer3 (CTC), selected by `tick: true` below -> erosgen emits
+# -DEROS_TICK_TIMER=3 and kernel/eros_tick.h aliases the registers. The 328P/
+# 2560 (Timer2) object code is byte-identical; only the 32U4 changes.
+#
+# Console: the 32U4's USB is NATIVE (a USB CDC device), not a USART-to-USB
+# bridge like the Uno/Nano. The `uart` driver here targets the on-chip USART1
+# (D0/D1 = PD2/PD3), which works with an EXTERNAL USB-serial adapter; a native
+# USB CDC ComplexDeviceDriver is out of scope. Board silk aliases match the
+# Leonardo header (the Micro shares the pinout; its silk labels differ).
+#
+# Status: with the Timer3 tick retarget the KERNEL builds for the 32U4; the
+# MCAL driver sources (USART1, TWI, ADC register maps) still need a 32U4 port
+# before a peripheral-using app links - the same honest caveat as the 2560.
+# =====================================================================
+name: atmega32u4
+board: Arduino Leonardo       # friendly board name shown in the GUI board picker
+
+# PORTB, PORTC, PORTD, PORTE, PORTF (no PORTA; PORTE/F are sparse).
+ports: BCDEF
+
+# Four timers: Timer0 8-bit (its own PWM driver), Timer1 16-bit (PWM), Timer3
+# 16-bit (the EROS tick - Timer0 is left free for timer0_pwm), Timer4 10-bit
+# high-speed. There is NO Timer2, which is exactly why the tick retargets here.
+timers:
+  timer0: { width: 8,  prescalers: [1, 8, 64, 256, 1024], pwm: timer0_pwm }
+  timer1: { width: 16, prescalers: [1, 8, 64, 256, 1024], pwm: pwm }
+  timer3: { width: 16, prescalers: [1, 8, 64, 256, 1024], tick: true }
+  timer4: { width: 10, prescalers: [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384] }
+
+toolchain:
+  mcu: atmega32u4
+  f_cpu: 16000000UL
+  avrdude:
+    part: m32u4
+    programmer: avr109          # Caterina bootloader (Leonardo/Micro)
+    baud: 57600
+    baud_note: "Leonardo/Micro (Caterina/avr109); reset by 1200-baud touch"
+
+# Arduino Leonardo digital + analog header silk -> ATmega32U4 port pin.
+# On-board LED (D13) = PC7. D0/D1 are USART1 RX/TX (PD2/PD3).
+aliases:
+  D0: PD2                       # RX1 (USART1 RXD)
+  D1: PD3                       # TX1 (USART1 TXD)
+  D2: PD1                       # SDA
+  D3: PD0                       # SCL / OC0B
+  D4: PD4
+  D5: PC6
+  D6: PD7
+  D7: PE6
+  D8: PB4
+  D9: PB5
+  D10: PB6
+  D11: PB7
+  D12: PD6
+  D13: PC7                      # on-board LED
+  A0: PF7
+  A1: PF6
+  A2: PF5
+  A3: PF4
+  A4: PF1
+  A5: PF0
+
+# Peripheral -> driver source. Same driver names/files as the 328P; the sources
+# themselves need a 32U4 register port (USART1 vs USART0, etc.).
+peripherals:
+  uart:       uart.c
+  pwm:        mcal/pwm.c
+  adc:        mcal/adc.c
+  eeprom:     mcal/eeprom.c
+  i2c:        mcal/i2c.c
+  spi:        mcal/spi.c
+  extint:     mcal/extint.c
+  timer0_pwm: mcal/timer0_pwm.c
+
+# Pin ownership per peripheral on the 32U4 (datasheet). UART is USART1 on
+# PD2/PD3; TWI on PD0/PD1; SPI on PB0..PB3.
+peripheral_pins:
+  uart:       [PD2, PD3]              # RXD1, TXD1 (USART1)
+  pwm:        [PB5]                    # OC1A
+  i2c:        [PD1, PD0]              # SDA, SCL
+  spi:        [PB0, PB2, PB3, PB1]    # SS, MOSI, MISO, SCK
+  timer0_pwm: [PD0, PB7]             # OC0B, OC0A
+  extint:     []
+  eeprom:     []
+  adc:        []
+
+conflicts:
+  - [i2c, timer0_pwm, "both own PD0 (SCL vs OC0B)"]
+
+driver_init:
+  uart:       "Uart_Init();"
+  pwm:        "Pwm_Init();"
+  adc:        "Adc_Init();"
+  i2c:        "I2c_Init();"
+  spi:        "Spi_Init(SPI_MODE0, SPI_CLK_DIV16);"
+  timer0_pwm: "T0Pwm_Init();"
+
+# Peripherals exposing a cyclic <Mod>_MainFunction (see atmega328p.yaml).
+main_functions:
+  adc:        Adc_MainFunction
+  i2c:        I2c_MainFunction
+
+driver_header:
+  uart:       uart.h
+  pwm:        pwm.h
+  adc:        adc.h
+  eeprom:     eeprom.h
+  i2c:        i2c.h
+  spi:        spi.h
+  extint:     extint.h
+  timer0_pwm: timer0_pwm.h

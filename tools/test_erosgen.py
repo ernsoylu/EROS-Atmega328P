@@ -1548,6 +1548,28 @@ def test_workspace_end_to_end_generates_each_app():
         assert erosgen.main(["erosgen", str(wf), "--check"]) == 0
 
 
+def test_atmega32u4_profile_tick_retarget():
+    from erosgen.emit.makefile import tick_timer_def
+    from erosgen.mcu import load_profile
+    u4 = load_profile("atmega32u4")
+    assert u4.ports == "BCDEF"
+    assert "timer2" not in u4.timers                  # the reason for the retarget
+    assert u4.timers["timer3"].get("tick") is True    # tick moves to Timer3
+    assert u4.avrdude_part == "m32u4"
+    # the tick define retargets only the 32U4; 328P/2560 keep Timer2 (no -D, so
+    # their golden Makefiles - and the compiled kernel - stay byte-identical)
+    assert tick_timer_def(u4) == " -DEROS_TICK_TIMER=3"
+    assert tick_timer_def(load_profile("atmega328p")) == ""
+    assert tick_timer_def(load_profile("atmega2560")) == ""
+
+
+def test_atmega328p_makefile_has_no_tick_define():
+    """Guard: the Timer2 default must never leak -DEROS_TICK_TIMER into a 328P
+    build, or every 328P golden Makefile would drift."""
+    mk = (HERE / "fixtures" / "model_app" / "Makefile").read_text()
+    assert "EROS_TICK_TIMER" not in mk
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

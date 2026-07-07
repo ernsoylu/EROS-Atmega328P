@@ -338,22 +338,24 @@ product line shares one generate command and a build posture.
 - Reuses the single-app `_generate()` path unchanged (byte-identical output for a
       plain app.yaml). GUI "open workspace" left as a later GUI nicety.
 
-### Phase 14 — ATmega32U4 boards (Leonardo / Micro) (last)
-The 32U4 is AVR (avr-gcc, same C), so it fits the MCU-profile mechanism — but
-unlike the ATmega2560 (same peripheral family, worked with just a profile) it
-needs a small **kernel retarget**, so it is its own phase, not a profile drop-in.
-- [ ] `mcu/atmega32u4.yaml` profile: ports B/C/D/E/F, its pin aliases (Leonardo
-      vs Micro silk differ), timers (Timer0/1/3/4 — **no Timer2**), peripheral
-      pins, avrdude part/programmer (Caterina bootloader, 57600).
-- [ ] **Kernel tick retarget** — the 1 kHz tick is hardware-fixed on **Timer2
-      CTC** (`tick_hz` invariant), which the 32U4 lacks. Move the tick to an
-      available timer (Timer0 or Timer3) behind a profile-selected macro; keep the
-      328P path byte-identical. This is the real cost of the port.
-- [ ] **Console decision** — the 32U4's USB is native (CDC), not a USART bridge;
-      `Uart_*` on USART1 works with an external USB-serial adapter, or add a USB
-      CDC ComplexDeviceDriver (out of scope unless needed). Document the choice.
-- **Risk:** medium — the tick retarget touches the kernel; gate it behind the
-      profile so 328P/2560 stay byte-identical.
+### Phase 14 — ATmega32U4 boards (Leonardo / Micro) (done)
+The 32U4 is AVR (same C) but has **no Timer2**, so unlike the 2560 it needed a
+small kernel retarget, not just a profile drop-in.
+- [x] **`mcu/atmega32u4.yaml`** (done): ports B/C/D/E/F, Leonardo header aliases
+      (D13=PC7 LED, D0/D1=USART1), timers (Timer0/1/3/4 — no Timer2, Timer3 flagged
+      `tick: true`), peripheral pins, avrdude `m32u4`/`avr109` (Caterina, 57600).
+- [x] **Kernel tick retarget** (done): `kernel/eros_tick.h` aliases the tick
+      timer's vector/registers/bits behind `EROS_TICK_TIMER` (default 2). erosgen
+      emits `-DEROS_TICK_TIMER=3` from the profile's `tick:` timer only when it
+      isn't Timer2, so `eros.c` compiles **byte-identically** for 328P/2560
+      (verified: same `eros.o` md5) and moves to Timer3 CTC on the 32U4. A full
+      32U4 firmware builds end-to-end (`__vector_32` = TIMER3_COMPA).
+- [x] **Console decision** (done, documented in the profile header): the 32U4 USB
+      is native CDC, not a USART bridge; `uart` targets USART1 (D0/D1) for an
+      external USB-serial adapter — a native USB CDC CDD is out of scope.
+- Caveat (as for the 2560): the kernel now builds for the 32U4; the MCAL driver
+      register maps (USART1/TWI/ADC) still need a 32U4 port before a
+      peripheral-using app links.
 
 ---
 

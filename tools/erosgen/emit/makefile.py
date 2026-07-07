@@ -42,6 +42,18 @@ def driver_sources(s, app_dir):
     return local, external
 
 
+def tick_timer_def(profile):
+    """The -DEROS_TICK_TIMER=<n> override for the kernel's tick timer, taken from
+    the profile's `tick:`-flagged timer. Returns "" for the Timer2 default (328P/
+    2560) so their Makefiles stay byte-identical; " -DEROS_TICK_TIMER=3" retargets
+    the 32U4 (no Timer2) to Timer3 - see kernel/eros_tick.h."""
+    for tname, spec in (profile.timers or {}).items():
+        if isinstance(spec, dict) and spec.get("tick"):
+            n = int("".join(ch for ch in tname if ch.isdigit()) or 2)
+            return "" if n == 2 else f" -DEROS_TICK_TIMER={n}"
+    return ""
+
+
 def periph_defines(s):
     defs = []
     uart = s.peripherals.get("uart")
@@ -250,7 +262,8 @@ def emit_makefile(s, app_dir):
         defs_ref = ""
     L.append("CFLAGS  := -Wall -Wextra -Werror -std=c99 -Os -flto \\")
     L.append("           -ffunction-sections -fdata-sections -fno-common \\")
-    L.append(f"           -mmcu=$(MCU) -DF_CPU=$(F_CPU){defs_ref} \\")
+    L.append(f"           -mmcu=$(MCU) -DF_CPU=$(F_CPU){tick_timer_def(s.profile)}"
+             f"{defs_ref} \\")
     L.append(f"           {' '.join(incs)}")
     L.append("LDFLAGS := -Wl,--gc-sections -Wl,-Map=$(TARGET).map")
     L.append("")

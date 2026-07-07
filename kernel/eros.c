@@ -36,6 +36,7 @@
 #include <util/atomic.h>
 
 #include "eros.h"
+#include "eros_tick.h"   /* EROS_TICK_* aliases: Timer2 (328P/2560) or Timer3 (32U4) */
 
 /* ================================================================== */
 /* Early watchdog disable (.init3)                                     */
@@ -197,13 +198,13 @@ static StatusType os_ActivateInternal(TaskType task)
 }
 
 /* ================================================================== */
-/* Category 2 ISR: 1 kHz system tick (Timer2 compare match A)          */
+/* Category 2 ISR: 1 kHz system tick (tick timer compare match A)      */
 /*                                                                     */
 /* WCET: O(OS_NUM_ALARMS), all constant work per alarm; with 3 alarms   */
 /* well below 10 us at 16 MHz. Alarm expiry -> task activation happens  */
 /* here, so activation error is <= 1 tick by construction.             */
 /* ================================================================== */
-ISR(TIMER2_COMPA_vect)
+ISR(EROS_TICK_VECT)
 {
     os_tickCount++;
     const TickType now = os_tickCount;
@@ -553,8 +554,8 @@ AppModeType GetActiveApplicationMode(void)
 /* effect (the running task can never be preempted by another task).    */
 /* The resource API exists for OSEK conformance and, when               */
 /* mask_tick_isr is configured, to raise the ceiling to ISR level by    */
-/* masking the Category-2 tick interrupt (OCIE2A). A compare match      */
-/* arriving while masked is latched in TIFR2.OCF2A, so holding a        */
+/* masking the Category-2 tick interrupt (EROS_TICK_OCIE). A compare    */
+/* match arriving while masked is latched in TIFR.OCF, so holding a      */
 /* resource for < 1 tick loses no time.                                 */
 /* ================================================================== */
 
@@ -576,11 +577,11 @@ StatusType GetResource(ResourceType res)
 
         if (pgm_read_byte(&OS_resourceConfig[res].mask_tick_isr) != 0u)
         {
-            if ((TIMSK2 & (uint8_t)(1u << OCIE2A)) != 0u)
+            if ((EROS_TICK_TIMSK & (uint8_t)(1u << EROS_TICK_OCIE)) != 0u)
             {
                 entry |= OS_RES_ISR_WAS_ON;
             }
-            TIMSK2 &= (uint8_t)~(1u << OCIE2A); /* raise to ISR ceiling */
+            EROS_TICK_TIMSK &= (uint8_t)~(1u << EROS_TICK_OCIE); /* raise to ISR ceiling */
         }
 
         os_resStack[os_resSp] = entry;
@@ -610,7 +611,7 @@ StatusType ReleaseResource(ResourceType res)
         os_resSp--;
         if ((os_resStack[os_resSp] & OS_RES_ISR_WAS_ON) != 0u)
         {
-            TIMSK2 |= (uint8_t)(1u << OCIE2A); /* drop ISR ceiling */
+            EROS_TICK_TIMSK |= (uint8_t)(1u << EROS_TICK_OCIE); /* drop ISR ceiling */
         }
         os_resHeldMask &= (uint8_t)~(1u << res);
     }
@@ -632,7 +633,7 @@ static void os_ReleaseLeakedResources(void)
             os_resSp--;
             if ((os_resStack[os_resSp] & OS_RES_ISR_WAS_ON) != 0u)
             {
-                TIMSK2 |= (uint8_t)(1u << OCIE2A);
+                EROS_TICK_TIMSK |= (uint8_t)(1u << EROS_TICK_OCIE);
             }
         }
         os_resHeldMask = 0u;
@@ -942,21 +943,24 @@ void StartOS(void)
     }
 
     /*
-     * Hardware tick: Timer2, CTC mode, 1 kHz.
-     *   16 MHz / 64 (prescaler) = 250 kHz; OCR2A = 249 -> 250 counts
+     * Hardware tick: CTC mode, 1 kHz, on the profile-selected tick timer
+     * (Timer2 on 328P/2560; Timer3 on 32U4 - see eros_tick.h).
+     *   16 MHz / 64 (prescaler) = 250 kHz; OCRA = 249 -> 250 counts
      *   -> exactly 1.000 kHz compare match rate.
-     * NOTE: Timer2's prescaler table differs from Timer0/1 - /64 is
-     * CS22:0 = 100 (on Timer0, 100 would be /256!).
+     * The CTC/prescaler bit encodings differ per timer, so the values are
+     * pre-composed in eros_tick.h (EROS_TICK_TCCR{A,B}_VAL).
      */
-    TCCR2A = (uint8_t)(1u << WGM21);  /* CTC, OC2A/OC2B disconnected    */
-    TCCR2B = (uint8_t)(1u << CS22);   /* prescaler /64 (Timer2 table)   */
-    OCR2A  = 249u;
-    TCNT2  = 0u;
-    ASSR   = 0u;                      /* synchronous clocking           */
-    TIFR2  = (uint8_t)(1u << OCF2A);  /* clear a stale compare flag     */
-    TIMSK2 = (uint8_t)(1u << OCIE2A); /* compare match A interrupt on   */
+    EROS_TICK_TCCRA = EROS_TICK_TCCRA_VAL;  /* CTC, OCxA/OCxB disconnected */
+    EROS_TICK_TCCRB = EROS_TICK_TCCRB_VAL;  /* CTC bits + prescaler /64    */
+    EROS_TICK_OCRA  = 249u;
+    EROS_TICK_TCNT  = 0u;
+#if EROS_TICK_HAS_ASSR
+    ASSR = 0u;                        /* Timer2 synchronous clocking    */
+#endif
+    EROS_TICK_TIFR  = (uint8_t)(1u << EROS_TICK_OCF);  /* clear stale flag */
+    EROS_TICK_TIMSK = (uint8_t)(1u << EROS_TICK_OCIE); /* compare match A on */
 
-    set_sleep_mode(SLEEP_MODE_IDLE);  /* Timer2 keeps running in IDLE   */
+    set_sleep_mode(SLEEP_MODE_IDLE);  /* tick timer keeps running in IDLE */
 
 #if OS_CFG_STARTUPHOOK
     StartupHook(); /* interrupts disabled; board init only              */

@@ -6,7 +6,7 @@
  *   Category 1: MUST NOT call any OS service. Use for latency-critical
  *               ISRs that only touch hardware (declare with ISR() as usual).
  *   Category 2: may call ActivateTask() (and only ActivateTask()) from
- *               interrupt context. The 1 ms Timer2 tick ISR inside the
+ *               interrupt context. The 1 ms system-tick ISR inside the
  *               kernel is Category 2: it activates tasks on alarm expiry.
  *
  * Deviation (documented): Schedule() is omitted. In this fully
@@ -47,7 +47,8 @@ extern uint8_t os_resetCause;
  * Start the operating system. Never returns.
  *
  * Sequence: stack paint -> kernel state init -> autostart activations ->
- * Timer2 1 kHz tick config -> StartupHook() (interrupts still disabled;
+ * 1 kHz tick timer config (Timer2 on 328P/2560, Timer3 on 32U4; see
+ * eros_tick.h) -> StartupHook() (interrupts still disabled;
  * intended for board/GPIO init - defer OS service calls to an autostart
  * task) -> wdt_enable(WDTO_2S) -> sei() -> scheduler loop.
  *
