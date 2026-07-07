@@ -1,0 +1,3 @@
+[submodule "simulink"]
+	path = simulink
+	url = git@github.com:ernsoylu/EROS-AVR-Codegen.git
