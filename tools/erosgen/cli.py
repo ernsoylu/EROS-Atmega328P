@@ -100,6 +100,9 @@ def _parse_args(argv):
                    help="additionally emit editor/toolchain files: "
                         "compile_commands.json, CMakeLists.txt, .vscode/, and "
                         "(for SWCs) an ASAP2 <name>.a2l")
+    p.add_argument("--variant", metavar="NAME",
+                   help="when app_yaml is an erosproject.yaml workspace, apply "
+                        "this variant's overlay to every app (e.g. release)")
     p.add_argument("--version", action="version",
                    version=f"erosgen {__version__}")
     return p.parse_args(argv[1:])
@@ -107,15 +110,37 @@ def _parse_args(argv):
 
 def main(argv):
     ns = _parse_args(argv)
-    check_only = ns.check
     src = Path(ns.app_yaml).resolve()
     if not src.exists():
         print(f"erosgen: {src} not found")
         return 2
-    app_dir = src.parent
+    doc = yaml.safe_load(src.read_text())
 
+    # A workspace (erosproject.yaml) aggregates several app.yamls; generate each,
+    # deep-merging the selected variant's overlay over every app's doc.
+    from .workspace import is_workspace, load_workspace
+    if is_workspace(doc):
+        try:
+            wname, apps = load_workspace(src, ns.variant)
+        except (ValueError, FileNotFoundError) as e:
+            print(f"erosgen: {e}")
+            return 2
+        vtag = f", variant '{ns.variant}'" if ns.variant else ""
+        print(f"erosgen: workspace '{wname}' - {len(apps)} app(s){vtag}")
+        rc = 0
+        for app_src, app_doc in apps:
+            print(f"\n== {app_src.parent.name}/{app_src.name} ==")
+            rc |= _generate(app_src, app_doc, ns)
+        return rc
+    return _generate(src, doc, ns)
+
+
+def _generate(src, doc, ns):
+    """Generate one application's outputs from an already-loaded (possibly
+    variant-merged) app.yaml doc. Returns a process exit code."""
+    check_only = ns.check
+    app_dir = src.parent
     try:
-        doc = yaml.safe_load(src.read_text())
         if ns.schema:
             from .schema import schema_available, validate_schema
             if not schema_available():

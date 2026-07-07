@@ -23,6 +23,28 @@ make config                                 # same, from inside a generated app
 tasks + C/C++ config, and — for apps with SWCs — an ASAP2 `<name>.a2l` describing
 the calibrations/measurements. They are opt-in and never part of the golden set.
 
+**Workspaces (`erosproject.yaml`).** A product line can aggregate several
+`app.yaml`s under one file and share a build posture:
+
+```yaml
+name: blink_product
+variants:
+  debug:   { system: { hooks: { error: true } } }
+  release: { system: { budget: { flash: 3072 } } }
+apps:
+  - nano/app.yaml
+  - uno/app.yaml
+```
+
+```sh
+python3 tools/erosgen.py erosproject.yaml               # generate every app
+python3 tools/erosgen.py erosproject.yaml --variant release
+```
+
+The selected variant's map is deep-merged over each app's doc (dicts merge
+key-wise; scalars and lists replace), so debug/release differ by overlay rather
+than duplicated app.yamls. A plain `app.yaml` generates exactly as before.
+
 **Environment (`uv`).** Deps are managed with [uv]; the core needs only PyYAML,
 with the opt-in extra `[gui]` (PySide6, ruamel.yaml):
 

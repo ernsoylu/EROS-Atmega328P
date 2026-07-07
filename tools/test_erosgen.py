@@ -1491,6 +1491,63 @@ def test_project_a2l_measurements_and_characteristics():
     assert "/begin CHARACTERISTIC Knb_Thresh_Pc_Pt" in a2l
 
 
+def test_workspace_deep_merge_and_detect():
+    from erosgen.workspace import deep_merge, is_workspace
+    base = {"system": {"name": "a", "hooks": {"error": False}}, "tasks": [1, 2]}
+    over = {"system": {"hooks": {"error": True}}, "tasks": [3]}
+    m = deep_merge(base, over)
+    assert m["system"]["name"] == "a"                 # key left untouched
+    assert m["system"]["hooks"]["error"] is True      # nested scalar overlaid
+    assert m["tasks"] == [3]                          # list replaced wholesale
+    assert is_workspace({"apps": ["x/app.yaml"]})
+    assert not is_workspace({"system": {}})           # a plain app.yaml is not one
+
+
+def test_workspace_load_and_variant():
+    import tempfile
+    import textwrap
+    from erosgen.workspace import load_workspace
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        for sub in ("nano", "uno"):
+            (root / sub).mkdir()
+            (root / sub / "app.yaml").write_text(f"system: {{ name: {sub} }}\n")
+        wf = root / "erosproject.yaml"
+        wf.write_text(textwrap.dedent("""
+            name: prod
+            variants:
+              release: { system: { budget: { flash: 3072 } } }
+            apps:
+              - nano/app.yaml
+              - uno/app.yaml
+        """))
+        name, apps = load_workspace(wf, "release")
+        assert name == "prod" and len(apps) == 2
+        assert {p.parent.name for p, _ in apps} == {"nano", "uno"}
+        for _, doc in apps:
+            assert doc["system"]["budget"]["flash"] == 3072   # overlay applied
+        # no variant => apps carry their own doc unchanged
+        _, plain = load_workspace(wf)
+        assert all("budget" not in doc["system"] for _, doc in plain)
+        # an unknown variant is a hard error, not a silent no-op
+        try:
+            load_workspace(wf, "nope")
+            raise AssertionError("expected ValueError")
+        except ValueError as e:
+            assert "nope" in str(e)
+
+
+def test_workspace_end_to_end_generates_each_app():
+    """A workspace routes through _generate once per app. --check writes nothing,
+    so this exercises the wiring against a real, fully-valid app.yaml."""
+    import tempfile
+    demo = REPO / "reference-demo" / "app.yaml"
+    with tempfile.TemporaryDirectory() as d:
+        wf = Path(d) / "erosproject.yaml"
+        wf.write_text(f"name: ws\napps:\n  - {demo}\n  - {demo}\n")  # abs paths
+        assert erosgen.main(["erosgen", str(wf), "--check"]) == 0
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

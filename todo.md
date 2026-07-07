@@ -326,16 +326,17 @@ Regex parser is tied to the ExportToFile/Define storage-class contract.
       description; ECU_ADDRESS left 0x0 for a linker-map patch step.
 - Opt-in only (no golden fixture carries them); XCP-on-UART eliminated.
 
-### Phase 13 — Project/workspace + variant management (low priority)
-Today one `app.yaml` = one application; there is no ECU-configuration-set or
-variant posture (the SystemDesk concept that matters the moment there's a product
-line). Low priority for a single-target hobby/education AVR tool, but a real
-SystemDesk-class gap worth recording.
-- [ ] `erosproject.yaml` aggregating multiple `app.yaml`s with shared BSW/MCAL
-      config and variant postures (debug/release, feature flags) as configuration
-      sets; the GUI opens a workspace, not just a single project.
-- **Risk:** medium; only worth doing once BSW layering (Phase 7) gives shared
-      config something to share.
+### Phase 13 — Project/workspace + variant management (done)
+Today one `app.yaml` = one application; a workspace aggregates several so a
+product line shares one generate command and a build posture.
+- [x] **`erosgen/workspace.py`** (done): an `erosproject.yaml` with `apps:` (a
+      list of app.yaml paths) and optional `variants:` (named overlay maps).
+      `erosgen erosproject.yaml [--variant NAME]` generates every app; the
+      selected variant's map is **deep-merged** over each app's doc (dicts merge
+      key-wise, scalars/lists replace), so debug/release differ by overlay, not
+      by duplicated app.yamls. Unknown variant / missing app are hard errors.
+- Reuses the single-app `_generate()` path unchanged (byte-identical output for a
+      plain app.yaml). GUI "open workspace" left as a later GUI nicety.
 
 ### Phase 14 — ATmega32U4 boards (Leonardo / Micro) (last)
 The 32U4 is AVR (avr-gcc, same C), so it fits the MCU-profile mechanism — but
