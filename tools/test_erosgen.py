@@ -1566,6 +1566,32 @@ def test_extint_driver_compiles_for_32u4():
         assert r.returncode == 0, r.stderr
 
 
+def test_atmega32u4_uart_console_usart1():
+    """The 32U4 console is USART1: the profile carries uart_instance=1, the engine
+    emits -DUART_USART=1 (not for 328P/2560), and uart.c builds on USART1."""
+    from erosgen.emit.makefile import uart_instance_def
+    from erosgen.mcu import load_profile
+    assert load_profile("atmega32u4").uart_instance == 1
+    assert uart_instance_def(load_profile("atmega32u4")) == " -DUART_USART=1"
+    assert uart_instance_def(load_profile("atmega328p")) == ""
+    assert uart_instance_def(load_profile("atmega2560")) == ""
+    # uart.c must build for the 32U4's USART1 (it has no USART0).
+    import shutil
+    import subprocess
+    import tempfile
+    if shutil.which("avr-gcc") is None:
+        return
+    demo = REPO / "reference-demo"
+    with tempfile.TemporaryDirectory() as d:
+        r = subprocess.run(
+            ["avr-gcc", "-Wall", "-Wextra", "-Werror", "-std=c99", "-Os",
+             "-mmcu=atmega32u4", "-DF_CPU=16000000UL", "-DUART_USART=1",
+             f"-I{demo}", "-c", str(demo / "uart.c"),
+             "-o", str(Path(d) / "uart.o")],
+            capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+
+
 def test_atmega32u4_profile_tick_retarget():
     from erosgen.emit.makefile import tick_timer_def
     from erosgen.mcu import load_profile

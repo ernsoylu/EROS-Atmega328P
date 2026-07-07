@@ -67,6 +67,7 @@ class MCUProfile:
     driver_header: dict       # peripheral -> header
     main_functions: dict = field(  # peripheral -> cyclic <Mod>_MainFunction sym
         default_factory=dict)
+    uart_instance: int = 0    # console USART: 0 (USART0, 328P/2560), 1 (32U4)
 
     @classmethod
     def load(cls, name):
@@ -92,6 +93,7 @@ class MCUProfile:
             driver_init=dict(d.get("driver_init", {})),
             driver_header=dict(d.get("driver_header", {})),
             main_functions=dict(d.get("main_functions", {})),
+            uart_instance=int(d.get("uart_instance", 0)),
         )
 
 

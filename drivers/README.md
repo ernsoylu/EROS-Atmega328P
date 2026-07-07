@@ -112,9 +112,11 @@ drivers account for: it has no Timer2 (the OS tick lives on Timer3 — see
 `kernel/eros_tick.h`) and only one pin-change bank (PORTB), so `extint.c` guards
 the PORTC/PORTD (`PCINT1/2`) banks behind `#if defined(...)`. Two functional
 notes for the 32U4 (compile-clean, but mind the hardware): `adc.c` reaches ADC
-channels 0–7 (covers the Leonardo A0–A5; ADC8–13 would need `MUX5`), and `uart.c`
-is USART0/console and is provided per-app (the 32U4 uses USART1 — see its
-profile).
+channels 0–7 (covers the Leonardo A0–A5; ADC8–13 would need `MUX5`), and the
+console `uart.c` (app-provided, `reference-demo/`) is USART-instance
+parameterized via `uart_regs.h` — USART0 by default, USART1 on the 32U4 (which
+has no USART0) when erosgen emits `-DUART_USART=1` from the profile. A native USB
+CDC console is deliberately out of scope.
 
 ## Concurrency contract (same as the rest of the repo)
 

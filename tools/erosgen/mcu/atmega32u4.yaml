@@ -13,14 +13,19 @@
 # USB CDC ComplexDeviceDriver is out of scope. Board silk aliases match the
 # Leonardo header (the Micro shares the pinout; its silk labels differ).
 #
-# Status: the KERNEL (Timer3 tick) and the MCAL drivers all build -Werror for the
-# 32U4 (`make -C drivers check-mcus`). extint.c guards the PORTC/PORTD pin-change
-# banks the 32U4 lacks; adc.c covers ADC0-7 (Leonardo A0-A5). The remaining gap is
-# the console: `uart.c` is USART0 and app-provided - the 32U4 needs a USART1
-# variant (D0/D1) or a native USB CDC driver (out of scope; see the header note).
+# Status: the KERNEL (Timer3 tick), the MCAL drivers, and the UART console all
+# build -Werror for the 32U4 (`make -C drivers check-mcus`; uart.c on USART1 via
+# `uart_instance` below). extint.c guards the PORTC/PORTD pin-change banks the
+# 32U4 lacks; adc.c covers ADC0-7 (Leonardo A0-A5). A native USB CDC console is
+# the only deliberate omission (out of scope; external USB-serial on USART1).
 # =====================================================================
 name: atmega32u4
 board: Arduino Leonardo       # friendly board name shown in the GUI board picker
+
+# Console USART. The 32U4 has NO USART0 - only USART1 (D0/D1) - so uart.c builds
+# with -DUART_USART=1 (erosgen emits it; see reference-demo/uart_regs.h). A native
+# USB CDC console is out of scope; use an external USB-serial adapter on USART1.
+uart_instance: 1
 
 # PORTB, PORTC, PORTD, PORTE, PORTF (no PORTA; PORTE/F are sparse).
 ports: BCDEF

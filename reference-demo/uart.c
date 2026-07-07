@@ -11,6 +11,7 @@
 #include <util/atomic.h>
 
 #include "uart.h"
+#include "uart_regs.h"   /* UART_* aliases: USART0 (328P/2560) or USART1 (32U4) */
 
 /* Baud and ring sizes are overridable from the build system (the
  * erosgen configurator emits -D flags from app.yaml); the defaults
@@ -59,32 +60,33 @@ static volatile uint8_t rxTail;
 
 void Uart_Init(void)
 {
-    UBRR0H = (uint8_t)(UART_UBRR >> 8);
-    UBRR0L = (uint8_t)UART_UBRR;
-    UCSR0A = 0u;                                      /* U2X off        */
-    UCSR0C = (uint8_t)((1u << UCSZ01) | (1u << UCSZ00)); /* 8N1         */
-    UCSR0B = (uint8_t)((1u << RXEN0) | (1u << TXEN0) | (1u << RXCIE0));
-    /* UDRIE0 is enabled on demand by Uart_PutChar(). */
+    UART_UBRRH = (uint8_t)(UART_UBRR >> 8);
+    UART_UBRRL = (uint8_t)UART_UBRR;
+    UART_UCSRA = 0u;                                  /* U2X off        */
+    UART_UCSRC = (uint8_t)((1u << UART_UCSZ1) | (1u << UART_UCSZ0)); /* 8N1 */
+    UART_UCSRB = (uint8_t)((1u << UART_RXEN) | (1u << UART_TXEN)
+                           | (1u << UART_RXCIE));
+    /* UDRIE is enabled on demand by Uart_PutChar(). */
 }
 
 /** Category 1 ISR: transmit ring drain. */
-ISR(USART_UDRE_vect)
+ISR(UART_UDRE_VECT)
 {
     if (txTail == txHead)
     {
-        UCSR0B &= (uint8_t)~(1u << UDRIE0); /* ring empty: TX IRQ off  */
+        UART_UCSRB &= (uint8_t)~(1u << UART_UDRIE); /* ring empty: TX IRQ off */
     }
     else
     {
-        UDR0   = txBuf[txTail];
-        txTail = (uint8_t)((txTail + 1u) & TX_MASK);
+        UART_UDR = txBuf[txTail];
+        txTail   = (uint8_t)((txTail + 1u) & TX_MASK);
     }
 }
 
 /** Category 1 ISR: receive capture. Overrun policy: drop newest byte. */
-ISR(USART_RX_vect)
+ISR(UART_RX_VECT)
 {
-    const uint8_t data = UDR0; /* always read: clears RXC0 */
+    const uint8_t data = UART_UDR; /* always read: clears RXC */
     const uint8_t next = (uint8_t)((rxHead + 1u) & RX_MASK);
 
     if (next != rxTail)
@@ -109,11 +111,11 @@ uint8_t Uart_PutChar(char c)
         txBuf[txHead] = (uint8_t)c;
         txHead        = next;
 
-        /* UCSR0B is also written by the UDRE ISR (it clears UDRIE0 on
+        /* UART_UCSRB is also written by the UDRE ISR (it clears UDRIE on
          * ring-empty); guard the read-modify-write. */
         ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
         {
-            UCSR0B |= (uint8_t)(1u << UDRIE0);
+            UART_UCSRB |= (uint8_t)(1u << UART_UDRIE);
         }
     }
     return ok;
