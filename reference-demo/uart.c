@@ -121,53 +121,9 @@ uint8_t Uart_PutChar(char c)
     return ok;
 }
 
-void Uart_Print(const char *s)
-{
-    while (*s != '\0')
-    {
-        (void)Uart_PutChar(*s);
-        s++;
-    }
-}
-
-void Uart_Print_P(PGM_P s)
-{
-    char c = (char)pgm_read_byte(s);
-
-    while (c != '\0')
-    {
-        (void)Uart_PutChar(c);
-        s++;
-        c = (char)pgm_read_byte(s);
-    }
-}
-
-void Uart_PrintU16(uint16_t value)
-{
-    char    digits[5]; /* 65535 -> max 5 digits */
-    uint8_t n = 0u;
-
-    do
-    {
-        digits[n] = (char)('0' + (uint8_t)(value % 10u));
-        value /= 10u;
-        n++;
-    } while (value != 0u);
-
-    while (n != 0u)
-    {
-        n--;
-        (void)Uart_PutChar(digits[n]);
-    }
-}
-
-void Uart_PrintHex8(uint8_t value)
-{
-    static const char hex[16] PROGMEM = "0123456789ABCDEF";
-
-    (void)Uart_PutChar((char)pgm_read_byte(&hex[(value >> 4) & 0x0Fu]));
-    (void)Uart_PutChar((char)pgm_read_byte(&hex[value & 0x0Fu]));
-}
+/* Uart_Print / Uart_Print_P / Uart_PrintU16 / Uart_PrintHex8 are the shared,
+ * transport-independent formatters - they live once in uart_print.c (link it
+ * alongside this file). */
 
 uint8_t Uart_GetChar(char *c)
 {

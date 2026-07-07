@@ -25,6 +25,7 @@ system:
 sources:
   - main.c
   - actuator.c
+  - uart_print.c            # shared console formatters (Uart_Print*), see uart_print.c
   - asw_signals.c
   - asw_10ms.c
   - asw_50ms.c

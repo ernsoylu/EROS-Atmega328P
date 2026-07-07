@@ -11,7 +11,7 @@ TARGET  := eros
 
 VPATH   := ../kernel ../drivers/mcal
 
-APP_SRCS := main.c actuator.c asw_signals.c asw_10ms.c asw_50ms.c asw_100ms.c asw_500ms.c uart.c
+APP_SRCS := main.c actuator.c uart_print.c asw_signals.c asw_10ms.c asw_50ms.c asw_100ms.c asw_500ms.c uart.c
 SRCS     := $(APP_SRCS) pwm.c eros.c config.c
 OBJS     := $(SRCS:.c=.o)
 DEPS     := $(SRCS:.c=.d)
