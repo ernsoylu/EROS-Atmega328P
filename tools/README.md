@@ -12,10 +12,16 @@ RTE** that binds a Simulink model's ports to peripherals and schedules it.
 invocation and `import erosgen` are unchanged.
 
 ```sh
-python3 tools/erosgen.py app.yaml          # generate
-python3 tools/erosgen.py app.yaml --check  # validate + report, write nothing
-make config                                # same, from inside a generated app
+python3 tools/erosgen.py app.yaml           # generate
+python3 tools/erosgen.py app.yaml --check   # validate + report, write nothing
+python3 tools/erosgen.py app.yaml --project # + compile_commands.json / CMake / .vscode / .a2l
+make config                                 # same, from inside a generated app
 ```
+
+`--project` additionally emits editor/toolchain files that mirror the Makefile:
+`compile_commands.json` (clangd/IntelliSense), `CMakeLists.txt`, `.vscode/`
+tasks + C/C++ config, and — for apps with SWCs — an ASAP2 `<name>.a2l` describing
+the calibrations/measurements. They are opt-in and never part of the golden set.
 
 **Environment (`uv`).** Deps are managed with [uv]; the core needs only PyYAML,
 with the opt-in extra `[gui]` (PySide6, ruamel.yaml):

@@ -312,11 +312,19 @@ Regex parser is tied to the ExportToFile/Define storage-class contract.
       swc.yaml model's RTE builds -Werror against real C. Schema `swc`/`parser`
       fields; opt-in (no golden drift).
 
-### Phase 12 — Toolchain/project gen + calibration (low priority)
-- [ ] `emit/` also produces `CMakeLists.txt`, VSCode `tasks.json`/
-      `c_cpp_properties.json`, and `compile_commands.json` from the per-`.o` rule.
-- [ ] `emit/a2l.py` (ASAP2/A2L from the `Calibration`/`Signal` dataclasses) —
-      the static calibration/measurement description for external tools.
+### Phase 12 — Toolchain/project gen + calibration (done)
+- [x] **`emit/project.py`** (done): opt-in `--project` flag also writes
+      `compile_commands.json` (clangd/IntelliSense), `CMakeLists.txt`, and
+      `.vscode/{tasks,c_cpp_properties}.json`. All derive from one `build_plan()`
+      that recomputes the exact sources/includes/defines the Makefile compiles
+      with (a guard test pins `app_srcs` to the Makefile's `APP_SRCS`); the model
+      codegen dirs are resolved to real paths so an IDE can index them. Verified
+      the generated CMake builds a real `.elf` with avr-gcc.
+- [x] **`emit/a2l.py`** (done): opt-in `<name>.a2l` (ASAP2) from the resolved
+      SWCs — one `MEASUREMENT` per bound port signal, one `CHARACTERISTIC` per
+      extern calibration (`#define` cals skipped: macros, no RAM). Static
+      description; ECU_ADDRESS left 0x0 for a linker-map patch step.
+- Opt-in only (no golden fixture carries them); XCP-on-UART eliminated.
 
 ### Phase 13 — Project/workspace + variant management (low priority)
 Today one `app.yaml` = one application; there is no ECU-configuration-set or

@@ -30,10 +30,12 @@ from pathlib import Path
 from .asw import resolve_asw_tasks
 from .constants import MAIN_C, __version__
 from .diagnostics import Diagnostics
-from .emit import (emit_asw_skeleton, emit_config_c, emit_config_h,
+from .emit import (emit_a2l, emit_asw_skeleton, emit_cmakelists,
+                   emit_compile_commands, emit_config_c, emit_config_h,
                    emit_main_skeleton, emit_makefile, emit_modes_c,
                    emit_modes_h, emit_os_gen_h, emit_rte_c, emit_rte_cfg_h,
-                   emit_rte_h, emit_rte_swc_h)
+                   emit_rte_h, emit_rte_swc_h, emit_vscode_cpp_properties,
+                   emit_vscode_tasks)
 from .emit.asw import ASW_FILES
 from .errors import ConfigError
 from .merge import has_markers
@@ -70,6 +72,7 @@ def write(path, content, check_only, overwrite=True, sink=None):
         return "unchanged"
     if check_only:
         return "would write"
+    path.parent.mkdir(parents=True, exist_ok=True)  # e.g. .vscode/ (--project)
     # `path` is a generated artifact under the user's own app_dir (main()
     # resolves it from the app.yaml the developer passed). erosgen is a local
     # codegen CLI with no trust boundary between the "attacker" and the file
@@ -93,6 +96,10 @@ def _parse_args(argv):
     p.add_argument("--schema", action="store_true",
                    help="additionally validate app.yaml against the JSON Schema "
                         "(schema/app.schema.json); needs the [schema] extra")
+    p.add_argument("--project", action="store_true",
+                   help="additionally emit editor/toolchain files: "
+                        "compile_commands.json, CMakeLists.txt, .vscode/, and "
+                        "(for SWCs) an ASAP2 <name>.a2l")
     p.add_argument("--version", action="version",
                    version=f"erosgen {__version__}")
     return p.parse_args(argv[1:])
@@ -174,6 +181,19 @@ def main(argv):
                             emit_modes_h(s.modes, src.name), True))
             outputs.append((app_dir / "Rte_Modes.c",
                             emit_modes_c(s.modes, src.name), True))
+        # --project: editor/toolchain files the IDE reads (opt-in; not fixtures).
+        if ns.project:
+            outputs.append((app_dir / "compile_commands.json",
+                            emit_compile_commands(s, app_dir), True))
+            outputs.append((app_dir / "CMakeLists.txt",
+                            emit_cmakelists(s, app_dir), True))
+            outputs.append((app_dir / ".vscode" / "tasks.json",
+                            emit_vscode_tasks(s), True))
+            outputs.append((app_dir / ".vscode" / "c_cpp_properties.json",
+                            emit_vscode_cpp_properties(s), True))
+            if rte_rms:   # ASAP2/A2L describes the SWC interface (ports + cals)
+                outputs.append((app_dir / f"{s.name}.a2l",
+                                emit_a2l(rte_rms, s.name, src.name), True))
     except ConfigError as e:
         print(e)
         return 1

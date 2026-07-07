@@ -1437,6 +1437,60 @@ def test_parser_tier_a_pycparser_matches_regex():
     assert a.runnable_fns == b.runnable_fns and a.init_fn == b.init_fn
 
 
+def test_project_compile_commands_matches_makefile():
+    """--project: build_plan resolves the same sources the Makefile compiles, and
+    compile_commands.json emits one avr-gcc entry per TU with the real flags."""
+    import json
+    import re
+    from erosgen.emit.project import build_plan, emit_compile_commands
+    ad = HERE / "fixtures" / "model_app"
+    s = _system_from(ad / "app.yaml")
+    plan = build_plan(s, ad)
+    appsrcs = re.search(r"APP_SRCS := (.+)", (ad / "Makefile").read_text())
+    assert plan["app_srcs"] == appsrcs.group(1).split()   # guard vs Makefile
+    db = json.loads(emit_compile_commands(s, ad))
+    files = {e["file"] for e in db}
+    assert "Rte.c" in files and "config.c" in files
+    assert any("eros.c" in f for f in files)
+    assert any("appKnbSwt.c" in f for f in files)         # model .c globbed in
+    for e in db:
+        assert e["command"].startswith("avr-gcc ")
+        assert "-mmcu=atmega328p" in e["command"]
+        assert e["command"].endswith(f"-c {e['file']}")
+
+
+def test_project_cmakelists_and_vscode():
+    from erosgen.emit.project import (emit_cmakelists,
+                                      emit_vscode_cpp_properties,
+                                      emit_vscode_tasks)
+    ad = HERE / "fixtures" / "model_app"
+    s = _system_from(ad / "app.yaml")
+    cm = emit_cmakelists(s, ad)
+    assert "project(knbdemo C)" in cm
+    assert "add_executable(knbdemo.elf" in cm
+    assert "-mmcu=${MCU}" in cm and "set(CMAKE_C_COMPILER avr-gcc)" in cm
+    import json
+    tasks = json.loads(emit_vscode_tasks(s))
+    assert {t["label"] for t in tasks["tasks"]} >= {"build", "flash"}
+    cpp = json.loads(emit_vscode_cpp_properties(s))
+    assert cpp["configurations"][0]["compileCommands"].endswith(
+        "compile_commands.json")
+
+
+def test_project_a2l_measurements_and_characteristics():
+    from erosgen import Diagnostics
+    from erosgen.emit import emit_a2l
+    from erosgen.models import resolve_models
+    ad = HERE / "fixtures" / "model_app"
+    doc = yaml.safe_load((ad / "app.yaml").read_text())
+    rms = resolve_models(doc, ad, Diagnostics(strict=True))
+    a2l = emit_a2l(rms, "knbdemo", "app.yaml")
+    assert "ASAP2_VERSION 1 71" in a2l
+    assert "/begin PROJECT EROS_knbdemo" in a2l
+    assert "/begin MEASUREMENT IN_KnbVal_Z" in a2l and "UWORD" in a2l
+    assert "/begin CHARACTERISTIC Knb_Thresh_Pc_Pt" in a2l
+
+
 def _run_standalone():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
