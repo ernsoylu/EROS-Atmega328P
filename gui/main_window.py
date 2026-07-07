@@ -1298,14 +1298,32 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Add Codegen Task", f"Could not parse: {e}")
             return
+        # Instance name: the same SWC can be added multiple times (different rate
+        # / pins), each a distinct instance. Default to the model name; if already
+        # used, suggest <model>_2, <model>_3, ... so the second add just works.
+        existing = {m.get("name") for m in self.project.plain.get("models", [])
+                    if isinstance(m, dict)}
+        inst_default = name
+        if name in existing:
+            i = 2
+            while f"{name}_{i}" in existing:
+                i += 1
+            inst_default = f"{name}_{i}"
+        inst, ok = QInputDialog.getText(
+            self, "Add Codegen Task",
+            f"Instance name (SWC '{name}'; use distinct names to add it more "
+            "than once):", text=inst_default)
+        if not ok or not inst:
+            return
         rate, ok = QInputDialog.getInt(self, "Add Codegen Task",
-                                       f"{name}: runnable rate (ms)", 10, 1, 32767)
+                                       f"{inst}: runnable rate (ms)", 10, 1, 32767)
         if not ok:
             return
-        self.project.add_model(name, d, runnable, rate)
-        self._sel = ("model", name)
-        self._log(f"added codegen task {name}: {len(sigs)} signals — bind their "
-                  "ports on the right")
+        self.project.add_model(inst, d, runnable, rate,
+                               model=name if inst != name else None)
+        self._sel = ("model", inst)
+        self._log(f"added codegen task {inst} (SWC {name}): {len(sigs)} signals "
+                  "— bind their ports on the right")
         self.refresh()
 
     def add_resource_dialog(self):

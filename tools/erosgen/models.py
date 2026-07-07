@@ -42,7 +42,7 @@ class BoundPort:
 
 @dataclass
 class ResolvedModel:
-    name: str
+    name: str             # INSTANCE name (task + RTE namespace); unique
     init_fn: str
     runnable_fn: str
     rate_ms: int
@@ -50,6 +50,11 @@ class ResolvedModel:
     outputs: list         # BoundPort[]
     interface: ModelInterface
     extra_runnables: list = field(default_factory=list)  # [(runnable, rate_ms)]
+    model_prefix: str = ""   # ERT file prefix (<prefix>_Intfc.h, <prefix>.h); the
+    #                          same SWC can be instantiated N times, each with its
+    #                          own `name`/rate/ports but sharing one model_prefix.
+    instanced: bool = False  # True when >1 ResolvedModel shares this model_prefix
+    #                          -> per-instance state is context-switched in the RTE.
 
 
 def _stem(signal_name):
@@ -93,6 +98,10 @@ def resolve_model(mspec, app_dir, sink):
     if not name:
         sink.error("MODEL_NO_NAME", "model: needs a 'name'", "models")
         return None
+    # The ERT file prefix (<prefix>_Intfc.h / <prefix>.h). Defaults to `name`, so
+    # a single SWC is unchanged; set `model:` to instantiate one SWC N times (each
+    # entry a distinct `name`/rate/ports sharing one model_prefix).
+    prefix = mspec.get("model") or name
     swc = mspec.get("swc")
     codegen_dir = mspec.get("codegen_dir")
     if not swc and not codegen_dir:
@@ -116,9 +125,9 @@ def resolve_model(mspec, app_dir, sink):
                            f"{where}: parser: c needs the [parse] extra "
                            "(uv sync --extra parse)", where)
                 return None
-            iface = parse_model_c(Path(app_dir) / codegen_dir, name)
+            iface = parse_model_c(Path(app_dir) / codegen_dir, prefix)
         else:
-            iface = parse_model(Path(app_dir) / codegen_dir, name)
+            iface = parse_model(Path(app_dir) / codegen_dir, prefix)
     except FileNotFoundError as e:
         sink.error("MODEL_NOT_FOUND", str(e), where)
         return None
@@ -153,7 +162,7 @@ def resolve_model(mspec, app_dir, sink):
                          f"model's entry points {iface.runnable_fns}", where)
         extra.append((er_fn, int(er_rate)))
     return ResolvedModel(name, init_fn, runnable_fn, mspec.get("rate_ms"),
-                         inputs, outputs, iface, extra)
+                         inputs, outputs, iface, extra, model_prefix=prefix)
 
 
 def bind_ports(iface, spec, where, sink):
@@ -265,8 +274,25 @@ def resolve_models(doc, app_dir, sink):
         rm = resolve_model(m, app_dir, sink)
         if rm is not None:
             out.append(rm)
+
+    # Multi-instance: several entries can share one SWC (same model_prefix), each a
+    # distinct instance (own name/rate/ports). Their ports would otherwise collide
+    # on the shared Rte_Cfg namespace AND on the SWC's single set of exported
+    # globals, so we (a) namespace each instance's port stems by instance name and
+    # (b) flag the group so the RTE context-switches per-instance state (emit/rte).
+    by_prefix = {}
+    for rm in out:
+        by_prefix.setdefault(rm.model_prefix, []).append(rm)
+    for group in by_prefix.values():
+        if len(group) > 1:
+            for rm in group:
+                rm.instanced = True
+                for port in rm.inputs + rm.outputs:
+                    port.stem = f"{rm.name}_{port.stem}"   # -> RTE_CFG_<INST>_<STEM>
+
     # Port #defines (RTE_CFG_<TAG>_*) share one Rte_Cfg.h namespace, so a port
-    # stem reused across models would collide - flag it before it miscompiles.
+    # stem reused across DIFFERENT SWCs would collide - flag it before it
+    # miscompiles. (Instances are already disambiguated above.)
     if len(out) > 1:
         owner = {}
         for rm in out:

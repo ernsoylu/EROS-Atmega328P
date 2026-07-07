@@ -59,6 +59,33 @@ parser, so a port authored that way will not be found.
   `PORT_UNKNOWN_SIGNAL`;
 - a reused port stem across models → `PORT_STEM_COLLISION`.
 
+## Multiple instances of one SWC
+
+The same codegen SWC can be instantiated more than once — e.g. the same
+controller at three rates driving three pins. Each `models:` entry gives a
+distinct **instance** `name` (its OS task + RTE namespace) and points at the
+shared code with **`model:`** (the ERT file prefix):
+
+```yaml
+models:
+  - { name: tog10, model: appTaskRate, codegen_dir: .../appTaskRate_ert_rtw,
+      rate_ms: 10, ports: { out: [{ signal: OUT_Toggler_B, driver: dio, port: D, bit: 1 }] } }
+  - { name: tog20, model: appTaskRate, codegen_dir: .../appTaskRate_ert_rtw,
+      rate_ms: 20, ports: { out: [{ signal: OUT_Toggler_B, driver: dio, port: D, bit: 2 }] } }
+```
+
+erosgen namespaces each instance's port `#define`s (`RTE_CFG_TOG10_*`), includes
+the model once, and **context-switches each instance's state** around its
+runnable — it saves/restores the SWC's exported globals in `Task_<instance>`, so
+the instances run independently.
+
+> **Scope:** this context-switch captures state that lives in the model's
+> **exported I/O globals** (e.g. a `UnitDelay` feeding back through an output —
+> the toggler). A model whose state lives in an internal `DWork` struct would
+> still share it across instances; for that, generate the model with Embedded
+> Coder's **Reusable function** interface (per-instance data), which is the
+> fully-general path.
+
 ## Semantic metadata not in C (scaling, min/max)
 
 C headers carry names, types, direction and array dimension — **not** scaling

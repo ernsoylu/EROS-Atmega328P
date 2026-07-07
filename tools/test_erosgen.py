@@ -1122,8 +1122,9 @@ def test_allowed_keys_derived_from_schema_matches_contract():
         "adc": {"reference", "prescaler", "main_function_ms"},
         "i2c": {"speed_hz", "main_function_ms"},
         "timer0_pwm": {"freq_hz"},
-        "model": {"name", "codegen_dir", "swc", "parser", "init", "runnable",
-                  "rate_ms", "wcet_ms", "ports", "order", "extra_runnables"},
+        "model": {"name", "codegen_dir", "model", "swc", "parser", "init",
+                  "runnable", "rate_ms", "wcet_ms", "ports", "order",
+                  "extra_runnables"},
         "runnable_ref": {"runnable", "rate_ms", "wcet_ms"},
         "ports": {"in", "out"},
         "port": {"signal", "driver", "channel", "port", "bit", "slope",
@@ -1681,6 +1682,36 @@ def test_param_header_optional_intfc_mandatory():
             raise AssertionError("expected FileNotFoundError for missing _Intfc.h")
         except FileNotFoundError:
             pass
+
+
+def test_codegen_multi_instance():
+    """One codegen SWC instantiated N times: distinct instance `name`s sharing a
+    `model` prefix -> namespaced ports (no stem collision) + per-instance state
+    context-switched in the RTE, so the instances run independently."""
+    from erosgen import Diagnostics
+    from erosgen.emit import emit_rte_c
+    from erosgen.models import resolve_models
+    cg = str(REPO / "tests" / "codegen" / "appKnbSwt_ert_rtw")
+    mk = lambda nm, rate, ch, bit: {                            # noqa: E731
+        "name": nm, "model": "appKnbSwt", "codegen_dir": cg, "rate_ms": rate,
+        "ports": {"in": [{"signal": "IN_KnbVal_Z", "driver": "adc",
+                          "channel": ch}],
+                  "out": [{"signal": "OUT_Led1_B", "driver": "dio",
+                           "port": "B", "bit": bit}]}}
+    doc = {"models": [mk("a", 10, 0, 5), mk("b", 20, 1, 4)]}
+    sink = Diagnostics(strict=False)
+    rms = resolve_models(doc, Path("."), sink)
+    assert [d for d in sink.items if d.severity == "error"] == []   # no collision
+    assert len(rms) == 2 and all(r.instanced for r in rms)
+    assert rms[0].model_prefix == "appKnbSwt"
+    tags = {p.tag for r in rms for p in r.inputs + r.outputs}
+    assert {"A_KNBVAL_Z", "B_KNBVAL_Z", "A_LED1_B", "B_LED1_B"} <= tags  # namespaced
+    c = emit_rte_c(rms, "app.yaml", integrated=True)
+    assert c.count('#include "appKnbSwt.h"') == 1                   # deduped include
+    assert "static boolean_T rte_a_OUT_Led1_B;" in c               # per-instance state
+    assert "OUT_Led1_B = rte_a_OUT_Led1_B;" in c                   # restore
+    assert "rte_b_OUT_Led1_B = OUT_Led1_B;" in c                   # save
+    assert "void Task_a(void)" in c and "void Task_b(void)" in c
 
 
 def _run_standalone():

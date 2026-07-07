@@ -366,9 +366,9 @@ def emit_rte_c(models, src_name, integrated=False):
     L.append('#include "Rte_Cfg.h"')
     L.append("")
     L.append(f"/* ASW - generated model{'s' if multi else ''} (read-only) */")
-    for rm in rms:
-        L.append(f'#include "{rm.name}.h"')
-        L.append(f'#include "{rm.name}_Intfc.h"')
+    for prefix in dict.fromkeys(rm.model_prefix or rm.name for rm in rms):
+        L.append(f'#include "{prefix}.h"')
+        L.append(f'#include "{prefix}_Intfc.h"')
     if headers:
         L.append("")
         L.append("/* BSW - MCAL drivers (read-only) */")
@@ -393,6 +393,17 @@ def emit_rte_c(models, src_name, integrated=False):
             continue          # ASW<->ASW: copied directly in Rte_Run, no adapter
         L.extend(_adapter(port))
         L.append("")
+    instanced = [rm for rm in rms if rm.instanced]
+    if instanced:
+        L.append("/* --- Per-instance state ---------------------------------------- */")
+        L.append("/* Instances of one SWC share its single set of exported globals, so */")
+        L.append("/* each instance's state is saved here and context-switched around  */")
+        L.append("/* its runnable (see the task bodies below). ------------------------ */")
+        for rm in instanced:
+            for sig in rm.interface.signals:
+                L.append(f"static {sig.ctype} rte_{rm.name}_{sig.name};")
+        L.append("")
+
     L.append("/* --- Lifecycle ------------------------------------------------- */")
     L.append("")
     _rte_init(L, rms, multi)
@@ -407,7 +418,16 @@ def emit_rte_c(models, src_name, integrated=False):
             L.append("")
             L.append(f"void Task_{rm.name}(void)")
             L.append("{")
-            L.append(f"    Rte_Run_{rm.name}();")
+            if rm.instanced:
+                for sig in rm.interface.signals:
+                    L.append(f"    {sig.name} = rte_{rm.name}_{sig.name};"
+                             "  /* restore instance state */")
+                L.append(f"    Rte_Run_{rm.name}();")
+                for sig in rm.interface.signals:
+                    L.append(f"    rte_{rm.name}_{sig.name} = {sig.name};"
+                             "  /* save instance state */")
+            else:
+                L.append(f"    Rte_Run_{rm.name}();")
             L.append("    TerminateTask();")
             L.append("}")
             # Extra runnables of this SWC: compute-only tasks at their own rate

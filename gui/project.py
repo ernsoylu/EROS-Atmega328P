@@ -156,17 +156,23 @@ class ProjectModel:
         runnable = mi.runnable_fns[0] if mi.runnable_fns else ""
         return name, sigs, runnable
 
-    def add_model(self, name, codegen_dir, runnable, rate_ms=10):
+    def add_model(self, name, codegen_dir, runnable, rate_ms=10, model=None):
         """Add a models: entry with each IN_/OUT_ signal as a port (driver TBD -
-        the live diagnostics then flag each as needing a binding)."""
-        mi = erosgen.parse_model(Path(codegen_dir), name)
+        the live diagnostics then flag each as needing a binding). `name` is the
+        INSTANCE name (task/namespace); pass `model` (the ERT file prefix) to add
+        the same SWC more than once - each instance then needs its own `name`,
+        rate and port bindings."""
+        prefix = model or name
+        mi = erosgen.parse_model(Path(codegen_dir), prefix)
         ports = {"in": [], "out": []}
         for s in mi.signals:
             if s.direction in ("in", "out"):
                 ports[s.direction].append({"signal": s.name})
-        self.doc.setdefault("models", []).append({
-            "name": name, "codegen_dir": str(codegen_dir),
-            "runnable": runnable, "rate_ms": int(rate_ms), "ports": ports})
+        entry = {"name": name, "codegen_dir": str(codegen_dir),
+                 "runnable": runnable, "rate_ms": int(rate_ms), "ports": ports}
+        if model and model != name:
+            entry["model"] = model          # ERT prefix, distinct from instance
+        self.doc.setdefault("models", []).append(entry)
 
     def _swc_entry(self, name):
         """The mutable ruamel dict for a bound SWC: a models: entry OR a
@@ -551,7 +557,9 @@ class ProjectModel:
         cg = e.get("codegen_dir")
         if cg:
             try:
-                _n, sigs, _r = self.model_signals(cg, name=name)
+                # parse by the ERT prefix (`model`), which differs from the
+                # instance `name` when one SWC is added multiple times.
+                _n, sigs, _r = self.model_signals(cg, name=e.get("model") or name)
                 ctypes = {s: c for s, c, _d in sigs}
             except Exception:
                 pass
