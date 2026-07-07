@@ -116,10 +116,20 @@ def emit_main_skeleton(s):
         L.append(f"    {end('SHUTDOWN_HOOK')}")
         L.append("}")
         L.append("")
+    # Generated GPIO/driver/RTE init lives in Board_ConfigurePins(). Its normal
+    # home is StartupHook(); when the startup hook is DISABLED there is no hook to
+    # host it, so wire it into the autostart task (before arming alarms) - or, if
+    # there is no autostart task either, into main() before StartOS(). Otherwise
+    # a `hooks: { startup: false }` project would never initialise its peripherals
+    # (e.g. the ADC stays disabled and a bound read hangs forever).
+    init_here = not s.hook_startup
     if init is not None:
         L.append(f"/** TASK_{init.name} - autostart: arm the cyclic alarms. */")
         L.append(f"void {init.entry}(void)")
         L.append("{")
+        if init_here:
+            L.append("    Board_ConfigurePins(); /* generated: gpio + driver init "
+                     "(no StartupHook to host it) */")
         if s.simulink:
             L.append(f"    {s.simulink['model']}_initialize();")
         L.append("    OS_StartAlarms(); /* generated from the YAML task set */")
@@ -130,6 +140,9 @@ def emit_main_skeleton(s):
         L.append("")
     L.append("int main(void)")
     L.append("{")
+    if init_here and init is None:
+        L.append("    Board_ConfigurePins(); /* generated: gpio + driver init "
+                 "(no StartupHook / autostart task to host it) */")
     L.append("    StartOS(); /* noreturn */")
     L.append("}")
     return "\n".join(L) + "\n"
