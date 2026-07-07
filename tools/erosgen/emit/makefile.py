@@ -54,6 +54,15 @@ def tick_timer_def(profile):
     return ""
 
 
+def uart_instance_def(profile):
+    """The -DUART_USART=<n> override for uart.c's console USART, from the profile's
+    `uart_instance`. Returns "" for the USART0 default (328P/2560) so their
+    Makefiles stay byte-identical; " -DUART_USART=1" selects USART1 on the 32U4
+    (which has no USART0) - see reference-demo/uart_regs.h."""
+    n = getattr(profile, "uart_instance", 0)
+    return "" if n == 0 else f" -DUART_USART={n}"
+
+
 def periph_defines(s):
     defs = []
     uart = s.peripherals.get("uart")
@@ -263,7 +272,7 @@ def emit_makefile(s, app_dir):
     L.append("CFLAGS  := -Wall -Wextra -Werror -std=c99 -Os -flto \\")
     L.append("           -ffunction-sections -fdata-sections -fno-common \\")
     L.append(f"           -mmcu=$(MCU) -DF_CPU=$(F_CPU){tick_timer_def(s.profile)}"
-             f"{defs_ref} \\")
+             f"{uart_instance_def(s.profile)}{defs_ref} \\")
     L.append(f"           {' '.join(incs)}")
     L.append("LDFLAGS := -Wl,--gc-sections -Wl,-Map=$(TARGET).map")
     L.append("")
