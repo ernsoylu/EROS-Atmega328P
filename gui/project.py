@@ -35,6 +35,7 @@ class ProjectModel:
     def __init__(self, path=None):
         self.path = None
         self.doc = {}
+        self._saved = {}     # plain snapshot at last load/save, for `dirty`
         if path:
             self.load(path)
 
@@ -47,11 +48,20 @@ class ProjectModel:
             raise FileNotFoundError(f"erosgen GUI: not a readable file: {p}")
         self.path = p
         self.doc = _yaml.load(p.read_text()) or {}
+        self._saved = self.plain
 
     def save(self, path=None):
         self.path = Path(path or self.path)
         with self.path.open("w") as f:
             _yaml.dump(self.doc, f)
+        self._saved = self.plain
+
+    @property
+    def dirty(self):
+        """True when the document differs from what's on disk (or was never
+        saved). Compared on the plain (comment-free) form, so touching a value
+        back to what it was reads as clean again."""
+        return bool(self.doc) and self.plain != self._saved
 
     @property
     def plain(self):
@@ -353,6 +363,7 @@ class ProjectModel:
             ],
             "resources": [{"name": "app", "users": ["main"]}],
         }
+        self._saved = {}     # never saved: dirty until Save As
 
     def set_name(self, name):
         self.doc.setdefault("system", {})["name"] = name

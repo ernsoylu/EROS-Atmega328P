@@ -801,3 +801,48 @@ def test_mainwindow_suppress_sleep_toggle():
     w._set_idle_busy(False)                           # back to default, key dropped
     assert p.idle() == "sleep" and "idle" not in p._system()
     w.close()
+
+
+def test_projectmodel_dirty_tracking(tmp_path):
+    """dirty flips on edits, clears on save, and clears again when a value is
+    edited back to what's on disk (compared on the plain form)."""
+    p = ProjectModel(MODEL_APP)
+    assert not p.dirty                                # freshly loaded
+    old = p.name
+    p.set_name("renamed")
+    assert p.dirty
+    p.set_name(old)
+    assert not p.dirty                                # back to on-disk state
+    p.set_name("renamed")
+    p.save(tmp_path / "app.yaml")
+    assert not p.dirty                                # save resets the baseline
+    q = ProjectModel()
+    q.new("fresh", "atmega328p")
+    assert q.dirty                                    # new project: unsaved
+
+
+def test_add_model_dialog_single_form(monkeypatch):
+    """The Add Codegen Task form parses the picked dir live and adds the model
+    with the (deduped) instance name + rate on accept."""
+    from gui.main_window import MainWindow
+    from PySide6.QtWidgets import QDialog, QLineEdit
+    _app()
+    cg = str(REPO / "tests" / "codegen" / "appKnbSwt_ert_rtw")
+    p = ProjectModel()
+    p.new("t", "atmega328p")
+    w = MainWindow(p)
+
+    def fake_exec(dlg):
+        # the user types/browses the codegen dir; the form parses it live
+        dir_edit = dlg.findChildren(QLineEdit)[0]
+        dir_edit.setText(cg)
+        dir_edit.editingFinished.emit()
+        return QDialog.Accepted
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+    w.add_model_dialog()
+    assert [m["name"] for m in p.models()] == ["appKnbSwt"]
+    assert p.models()[0]["rate_ms"] == 10             # the form default
+    w.add_model_dialog()                              # same SWC again
+    assert [m["name"] for m in p.models()] == ["appKnbSwt", "appKnbSwt_2"]
+    assert p._model_entry("appKnbSwt_2")["model"] == "appKnbSwt"
+    w.close()

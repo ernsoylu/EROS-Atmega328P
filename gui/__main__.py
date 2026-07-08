@@ -16,7 +16,12 @@ def main(argv=None):
     project = ProjectModel(argv[1]) if len(argv) > 1 else ProjectModel()
     win = MainWindow(project)
     win.install_excepthook()   # keep the app alive + log on a slot exception
-    win.resize(960, 640)
+    win.confirm_close = True   # prompt to save unsaved edits on exit
+    geo = win._settings.value("geometry")
+    if geo is not None:
+        win.restoreGeometry(geo)   # come back at last session's size/position
+    else:
+        win.resize(1200, 760)
     win.show()
     return app.exec()
 

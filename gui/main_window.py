@@ -10,8 +10,9 @@ console. No domain logic - every fact comes from the ProjectModel / the engine.
 import sys
 import traceback
 
-from PySide6.QtCore import QProcess, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtCore import QProcess, QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import (QColor, QDesktopServices, QKeySequence,
+                           QShortcut)
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
                                QLabel, QLineEdit, QMainWindow, QMessageBox,
@@ -30,6 +31,22 @@ def _ro(text):
     return QTableWidgetItem(str(text))
 
 
+def _btn_row(*buttons, align="right"):
+    """Lay buttons out at their natural size instead of stretched across the
+    whole panel: primary actions (Apply) sit right, additive ones (+ X) left."""
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    if align == "right":
+        row.addStretch(1)
+    for b in buttons:
+        row.addWidget(b)
+    if align != "right":
+        row.addStretch(1)
+    holder = QWidget()
+    holder.setLayout(row)
+    return holder
+
+
 class MainWindow(QMainWindow):
     def __init__(self, project=None):
         super().__init__()
@@ -38,10 +55,13 @@ class MainWindow(QMainWindow):
         self._sel = ("system",)      # which node the right panel is showing
         self.mcu_combo = None        # (re)created by the System page
         self.workspace = None   # a WorkspaceModel when an erosproject.yaml is open
+        self.confirm_close = False   # the app entry point opts in (tests don't)
+        self._settings = QSettings("eros", "configurator")
         self._build_ui()
         self._build_menu()
         self._build_toolbar()
         self._build_workspace_bar()
+        self._build_statusbar()
         self.refresh()
 
     def install_excepthook(self):
@@ -67,7 +87,11 @@ class MainWindow(QMainWindow):
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Project", "Value"])
         self.tree.setColumnWidth(0, 240)
+        self.tree.setAlternatingRowColors(True)
         self.tree.currentItemChanged.connect(self._on_select)
+        # Right-click: the same structural edits as the Edit menu, in place.
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._tree_menu)
 
         # right: a context panel that we swap out per selection.
         self.inspector = QScrollArea()
@@ -86,6 +110,9 @@ class MainWindow(QMainWindow):
         self.diag.verticalHeader().setVisible(False)
         self.diag.setEditTriggers(QTableWidget.NoEditTriggers)
         self.diag.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.diag.setAlternatingRowColors(True)
+        self.diag.horizontalHeader().setStretchLastSection(True)
+        self.diag.setToolTip("Double-click a problem to open its source")
         self.diag.itemDoubleClicked.connect(self._open_diagnostic)
 
         self.console = QPlainTextEdit()
@@ -119,40 +146,126 @@ class MainWindow(QMainWindow):
         outer.setSizes([460, 180])
         self.setCentralWidget(outer)
 
+    def _action(self, menu, text, slot, shortcut=None, tip=None):
+        act = menu.addAction(text)
+        act.triggered.connect(slot)
+        if shortcut:
+            act.setShortcut(QKeySequence(shortcut))
+        if tip:
+            act.setStatusTip(tip)
+        return act
+
     def _build_menu(self):
         filem = self.menuBar().addMenu("&File")
-        for text, slot in (("&New Project…", self.new_project),
-                           ("&Open…", self.open_project),
-                           ("Open &Workspace…", self.open_workspace),
-                           ("&Save", self.save_project),
-                           ("Save &As…", self.save_as),
-                           ("&Generate", self.generate),
-                           ("&Build", self.build)):
-            filem.addAction(text).triggered.connect(slot)
+        self._action(filem, "&New Project…", self.new_project, "Ctrl+N",
+                     "Start a fresh project from a minimal valid skeleton")
+        self._action(filem, "&Open…", self.open_project, "Ctrl+O",
+                     "Open an app.yaml")
+        self._action(filem, "Open &Workspace…", self.open_workspace,
+                     "Ctrl+Shift+O", "Open an erosproject.yaml (multi-app)")
+        self.recent_menu = filem.addMenu("Open &Recent")
+        self._refresh_recent_menu()
         filem.addSeparator()
-        filem.addAction("E&xit").triggered.connect(self.close)
+        self._action(filem, "&Save", self.save_project, "Ctrl+S",
+                     "Save the project to its app.yaml")
+        self._action(filem, "Save &As…", self.save_as, "Ctrl+Shift+S",
+                     "Save the project to a new file")
+        filem.addSeparator()
+        self._action(filem, "&Generate", self.generate, "Ctrl+G",
+                     "Run erosgen: validate + emit the RTE for this app")
+        self._action(filem, "&Build", self.build, "Ctrl+B",
+                     "Run make in the project directory")
+        filem.addSeparator()
+        self._action(filem, "E&xit", self.close, "Ctrl+Q")
 
         # One "Edit" menu for structure: add a task, add a model, remove the
         # selected one. Port binding is no longer a modal - it's inline on the
         # model's page (select a model on the left).
         editm = self.menuBar().addMenu("&Edit")
-        editm.addAction("Add &Task…").triggered.connect(self.add_task_dialog)
-        editm.addAction("Add &Codegen Task…").triggered.connect(
-            self.add_model_dialog)
-        editm.addAction("Add &Resource…").triggered.connect(
-            self.add_resource_dialog)
+        self._action(editm, "Add &Task…", self.add_task_dialog, "Ctrl+T",
+                     "Add a plain or ASW task to the schedule")
+        self._action(editm, "Add &Codegen Task…", self.add_model_dialog,
+                     "Ctrl+M", "Add a Simulink SWC from a <model>_ert_rtw dir")
+        self._action(editm, "Add &Resource…", self.add_resource_dialog, None,
+                     "Add an OSEK shared resource")
         editm.addSeparator()
-        editm.addAction("&Remove Selected").triggered.connect(
-            self.remove_selected)
+        # Ctrl+Del app-wide; a plain Del would steal the key from every text
+        # field. Del still works when the tree itself has focus (below).
+        self._action(editm, "&Remove Selected", self.remove_selected,
+                     "Ctrl+Del", "Remove the task, codegen task or resource "
+                     "selected in the tree")
+        tree_del = QShortcut(QKeySequence(Qt.Key_Delete), self.tree)
+        tree_del.setContext(Qt.WidgetShortcut)
+        tree_del.activated.connect(self.remove_selected)
 
         self.menuBar().addMenu("&Help").addAction("&About").triggered.connect(
             self.about)
 
+    # ---- recent files -----------------------------------------------------
+    def _recent_files(self):
+        val = self._settings.value("recent_files", [])
+        if isinstance(val, str):     # QSettings flattens 1-element lists
+            val = [val]
+        return [f for f in (val or []) if f]
+
+    def _remember_recent(self, path):
+        files = self._recent_files()
+        p = str(path)
+        files = [p] + [f for f in files if f != p]
+        self._settings.setValue("recent_files", files[:8])
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self):
+        self.recent_menu.clear()
+        files = self._recent_files()
+        self.recent_menu.setEnabled(bool(files))
+        for f in files:
+            self.recent_menu.addAction(f).triggered.connect(
+                lambda _=None, fn=f: self._open_recent(fn))
+
+    def _open_recent(self, fn):
+        try:
+            self.project.load(fn)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, "Open Recent", str(e))
+            return
+        self._sel = ("system",)
+        self._remember_recent(fn)
+        self._log(f"opened {fn}")
+        self.refresh()
+
     def _build_toolbar(self):
+        style = self.style()
         tb = self.addToolBar("Main")
         tb.setMovable(False)
-        for text, slot in (("Generate", self.generate), ("Build", self.build)):
-            tb.addAction(text).triggered.connect(slot)
+        tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        for text, slot, icon, tip in (
+                ("New", self.new_project, "SP_FileIcon",
+                 "New project  (Ctrl+N)"),
+                ("Open", self.open_project, "SP_DialogOpenButton",
+                 "Open app.yaml  (Ctrl+O)"),
+                ("Save", self.save_project, "SP_DialogSaveButton",
+                 "Save  (Ctrl+S)"),
+                (None, None, None, None),
+                ("Generate", self.generate, "SP_MediaPlay",
+                 "Validate + emit the RTE  (Ctrl+G)"),
+                ("Build", self.build, "SP_DialogApplyButton",
+                 "Run make  (Ctrl+B)")):
+            if text is None:
+                tb.addSeparator()
+                continue
+            act = tb.addAction(style.standardIcon(
+                getattr(style.StandardPixmap, icon)), text)
+            act.triggered.connect(slot)
+            act.setToolTip(tip)
+
+    def _build_statusbar(self):
+        """Always-visible feedback: the last console line (transient, left) and
+        a live problems counter (permanent, right) - so neither hides behind
+        the bottom tabs."""
+        self.status_problems = QLabel("")
+        self.status_problems.setContentsMargins(8, 0, 8, 0)
+        self.statusBar().addPermanentWidget(self.status_problems)
 
     def _build_workspace_bar(self):
         """A second toolbar shown only when an erosproject.yaml is open: the app
@@ -175,6 +288,21 @@ class MainWindow(QMainWindow):
         self.ws_apps.activated.connect(self._on_ws_app)
         self.ws_bar.setVisible(False)
 
+    def _tree_menu(self, pos):
+        from PySide6.QtWidgets import QMenu
+        item = self.tree.itemAt(pos)
+        if item is not None:
+            self.tree.setCurrentItem(item)     # act on the row under the cursor
+        menu = QMenu(self)
+        self._action(menu, "Add Task…", self.add_task_dialog)
+        self._action(menu, "Add Codegen Task…", self.add_model_dialog)
+        self._action(menu, "Add Resource…", self.add_resource_dialog)
+        key = item.data(0, Qt.UserRole) if item else None
+        if key and key[0] in ("task", "asw", "model", "resource", "signal"):
+            menu.addSeparator()
+            self._action(menu, f"Remove '{key[1]}'", self.remove_selected)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
     # ---- view refresh ---------------------------------------------------
     def refresh(self):
         self._populate_tree()
@@ -185,6 +313,8 @@ class MainWindow(QMainWindow):
             title = "(no project)"
         else:
             title = self.project.name + ("" if self.project.path else " — unsaved")
+            if self.project.dirty:
+                title += " •"           # unsaved changes
         self.setWindowTitle(f"EROS Configurator — {title}")
 
     def _defer_refresh(self):
@@ -476,18 +606,19 @@ class MainWindow(QMainWindow):
             lay.addWidget(ctable)
             addc = QPushButton("+ Calibration")
             addc.clicked.connect(lambda: self._add_calibration(tname))
-            lay.addWidget(addc)
+            lay.addWidget(_btn_row(addc, align="left"))
         else:
             hint = QPushButton("Add interface (make this an ASW task)")
             hint.clicked.connect(lambda: self._make_asw(tname))
-            lay.addWidget(hint)
+            lay.addWidget(_btn_row(hint, align="left"))
 
         self._task_page = {"name": tname, "period": period, "wcet": wcet,
                            "autostart": autostart, "iface": iface_states,
                            "cals": cal_states}
         apply = QPushButton("Apply")
+        apply.setDefault(True)
         apply.clicked.connect(lambda: self._apply_task())
-        lay.addWidget(apply)
+        lay.addWidget(_btn_row(apply))
         lay.addStretch(1)
         return w
 
@@ -616,8 +747,9 @@ class MainWindow(QMainWindow):
 
         self._model_page = {"name": mname, "rate": rate, "states": states}
         apply = QPushButton("Apply bindings")
+        apply.setDefault(True)
         apply.clicked.connect(lambda: self._apply_model())
-        lay.addWidget(apply)
+        lay.addWidget(_btn_row(apply))
         return w
 
     def _page_resource(self, rname):
@@ -647,8 +779,9 @@ class MainWindow(QMainWindow):
 
         self._resource_page = {"name": rname, "boxes": boxes}
         apply = QPushButton("Apply")
+        apply.setDefault(True)
         apply.clicked.connect(lambda: self._apply_resource())
-        lay.addWidget(apply)
+        lay.addWidget(_btn_row(apply))
         lay.addStretch(1)
         return w
 
@@ -1118,11 +1251,16 @@ class MainWindow(QMainWindow):
                 self.pinout.setItem(r, bit, item)
         self.pinout.resizeColumnsToContents()
         self.pinout.resizeRowsToContents()
+        chip = "&nbsp;<span style='background-color:{c}; color:white;'>" \
+               "&nbsp;{t}&nbsp;</span>"
+        legend = "".join(chip.format(c=self._PIN_COLORS[k], t=t) for k, t in
+                         (("periph", "peripheral"), ("gpio", "gpio"),
+                          ("port", "port binding"), ("conflict", "conflict"),
+                          ("na", "not broken out")))
         self.pin_note.setText(
             "Clock: Timer2 CTC, /64, OCR2A=249 → 16 MHz/64/250 = 1 kHz OS "
-            "tick (fixed — Timer2 is the kernel tick, never repurpose it).  "
-            "Legend: blue=peripheral, green=gpio, purple=port binding, "
-            "red=conflict, grey=not broken out.")
+            "tick (fixed — Timer2 is the kernel tick, never repurpose it)."
+            "&nbsp;&nbsp;Legend:" + legend)
 
     def _populate_diagnostics(self):
         # gate on the doc (not the path) so a new, unsaved project shows its
@@ -1139,11 +1277,29 @@ class MainWindow(QMainWindow):
                 self.diag.setItem(row, col, item)
         self.diag.resizeColumnsToContents()
         errs = sum(1 for d in diags if d.severity == "error")
+        warns = sum(1 for d in diags if d.severity == "warning")
         if not diags:
             self.tabs.setTabText(0, "Problems")
         else:
             tail = f", {errs} err" if errs else ""
             self.tabs.setTabText(0, f"Problems ({len(diags)}{tail})")
+        # permanent status-bar counter: red for errors, amber for warnings,
+        # green check when the config is clean.
+        if errs:
+            self.status_problems.setText(
+                f"<font color='{_SEV_COLOR['error']}'>✖ {errs} error"
+                f"{'s' if errs != 1 else ''}"
+                + (f", {warns} warning{'s' if warns != 1 else ''}" if warns
+                   else "") + "</font>")
+        elif warns:
+            self.status_problems.setText(
+                f"<font color='{_SEV_COLOR['warning']}'>⚠ {warns} warning"
+                f"{'s' if warns != 1 else ''}</font>")
+        elif self.project.doc:
+            self.status_problems.setText("<font color='#2e8b57'>✔ no problems"
+                                         "</font>")
+        else:
+            self.status_problems.setText("")
 
     def _open_diagnostic(self, item):
         """Double-click a problem row -> open its source (jump to source). The
@@ -1163,14 +1319,40 @@ class MainWindow(QMainWindow):
 
     def _log(self, text):
         self.console.appendPlainText(text)
+        # Mirror the first line to the status bar so feedback is visible even
+        # when the Console tab isn't the active one.
+        first = text.strip().splitlines()[0] if text.strip() else ""
+        if first:
+            self.statusBar().showMessage(first, 6000)
 
     # ---- actions --------------------------------------------------------
+    def closeEvent(self, event):
+        """Ask before discarding unsaved edits. Only when the entry point
+        opted in (confirm_close) - tests construct + close windows freely."""
+        if self.confirm_close and self.project.dirty:
+            ret = QMessageBox.question(
+                self, "Unsaved changes",
+                f"'{self.project.name}' has unsaved changes. Save them?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save)
+            if ret == QMessageBox.Cancel:
+                event.ignore()
+                return
+            if ret == QMessageBox.Save:
+                self.save_project()
+                if self.project.dirty:      # Save As was cancelled
+                    event.ignore()
+                    return
+        self._settings.setValue("geometry", self.saveGeometry())
+        event.accept()
+
     def open_project(self):
         fn, _ = QFileDialog.getOpenFileName(
             self, "Open app.yaml", "", "YAML (*.yaml *.yml)")
         if fn:
             self.project.load(fn)
             self._sel = ("system",)
+            self._remember_recent(fn)
             self._log(f"opened {fn}")
             self.refresh()
 
@@ -1230,6 +1412,7 @@ class MainWindow(QMainWindow):
         if self.project.path:
             self.project.save()
             self._log(f"saved {self.project.path}")
+            self._defer_refresh()      # clear the dirty marker in the title
         else:
             self.save_as()
 
@@ -1249,6 +1432,7 @@ class MainWindow(QMainWindow):
                                             "YAML (*.yaml *.yml)")
         if fn:
             self.project.save(fn)
+            self._remember_recent(fn)
             self._log(f"saved {fn}")
             self.refresh()
 
@@ -1289,41 +1473,100 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def add_model_dialog(self):
-        from PySide6.QtWidgets import QInputDialog
-        d = QFileDialog.getExistingDirectory(self, "Select a <model>_ert_rtw dir")
-        if not d:
-            return
-        try:
-            name, sigs, runnable = self.project.model_signals(d)
-        except Exception as e:
-            QMessageBox.warning(self, "Add Codegen Task", f"Could not parse: {e}")
-            return
-        # Instance name: the same SWC can be added multiple times (different rate
-        # / pins), each a distinct instance. Default to the model name; if already
-        # used, suggest <model>_2, <model>_3, ... so the second add just works.
-        existing = {m.get("name") for m in self.project.plain.get("models", [])
-                    if isinstance(m, dict)}
-        inst_default = name
-        if name in existing:
+        """One form instead of three chained dialogs: pick the codegen dir,
+        see what parsed (SWC, runnable, signal count) live, then set the
+        instance name + rate. OK stays disabled until the parse succeeds and
+        the instance name is free."""
+        from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout,
+                                       QSpinBox)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add Codegen Task")
+        form = QFormLayout(dlg)
+
+        dir_edit = QLineEdit()
+        dir_edit.setPlaceholderText("…/<model>_ert_rtw")
+        browse = QPushButton("Browse…")
+        dir_row = QHBoxLayout()
+        dir_row.setContentsMargins(0, 0, 0, 0)
+        dir_row.addWidget(dir_edit, 1)
+        dir_row.addWidget(browse)
+        holder = QWidget()
+        holder.setLayout(dir_row)
+        form.addRow("Codegen dir", holder)
+
+        info = QLabel("Pick the model's <model>_ert_rtw directory.")
+        info.setWordWrap(True)
+        form.addRow("", info)
+        inst = QLineEdit()
+        inst.setToolTip("The same SWC can be added several times (different "
+                        "rate / pins); give each instance a distinct name.")
+        form.addRow("Instance name", inst)
+        rate = QSpinBox()
+        rate.setRange(1, 32767)
+        rate.setValue(10)
+        rate.setSuffix(" ms")
+        form.addRow("Runnable rate", rate)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        form.addRow(bb)
+
+        existing = ({m.get("name") for m in self.project.plain.get("models", [])
+                     if isinstance(m, dict)}
+                    | set(self.project.runnable_names()))
+        parsed = {}
+
+        def update_ok():
+            nm = inst.text().strip()
+            bb.button(QDialogButtonBox.Ok).setEnabled(
+                bool(parsed) and bool(nm) and nm not in existing)
+            if nm and nm in existing:
+                info.setText(f"'{nm}' is already used — pick a distinct "
+                             "instance name.")
+
+        def parse(d):
+            parsed.clear()
+            if not d:
+                update_ok()
+                return
+            try:
+                name, sigs, runnable = self.project.model_signals(d)
+            except Exception as e:
+                info.setText(f"Could not parse: {e}")
+                update_ok()
+                return
+            parsed.update(name=name, sigs=sigs, runnable=runnable, dir=d)
+            info.setText(f"SWC '{name}' — runnable {runnable}, "
+                         f"{len(sigs)} signal(s)")
+            # Default instance = the model name; dodge collisions with _2, _3…
+            inst_default = name
             i = 2
-            while f"{name}_{i}" in existing:
+            while inst_default in existing:
+                inst_default = f"{name}_{i}"
                 i += 1
-            inst_default = f"{name}_{i}"
-        inst, ok = QInputDialog.getText(
-            self, "Add Codegen Task",
-            f"Instance name (SWC '{name}'; use distinct names to add it more "
-            "than once):", text=inst_default)
-        if not ok or not inst:
+            inst.setText(inst_default)
+            update_ok()
+
+        def pick():
+            d = QFileDialog.getExistingDirectory(
+                self, "Select a <model>_ert_rtw dir")
+            if d:
+                dir_edit.setText(d)
+                parse(d)
+        browse.clicked.connect(pick)
+        dir_edit.editingFinished.connect(lambda: parse(dir_edit.text().strip()))
+        inst.textChanged.connect(lambda _=None: update_ok())
+        update_ok()
+
+        if dlg.exec() != QDialog.Accepted or not parsed:
             return
-        rate, ok = QInputDialog.getInt(self, "Add Codegen Task",
-                                       f"{inst}: runnable rate (ms)", 10, 1, 32767)
-        if not ok:
-            return
-        self.project.add_model(inst, d, runnable, rate,
-                               model=name if inst != name else None)
-        self._sel = ("model", inst)
-        self._log(f"added codegen task {inst} (SWC {name}): {len(sigs)} signals "
-                  "— bind their ports on the right")
+        name, nm = parsed["name"], inst.text().strip()
+        self.project.add_model(nm, parsed["dir"], parsed["runnable"],
+                               rate.value(), model=name if nm != name else None)
+        self._sel = ("model", nm)
+        self._log(f"added codegen task {nm} (SWC {name}): "
+                  f"{len(parsed['sigs'])} signals — bind their ports on the "
+                  "right")
         self.refresh()
 
     def add_resource_dialog(self):
@@ -1345,16 +1588,25 @@ class MainWindow(QMainWindow):
         kind, name = self._sel[0], (self._sel[1] if len(self._sel) > 1 else None)
         if kind == "signal":                    # route by what owns the port
             kind = "asw" if self.project.is_asw(name) else "model"
+        if kind not in ("task", "asw", "model", "resource"):
+            QMessageBox.information(
+                self, "Remove", "Select a task, codegen task or resource.")
+            return
+        # No undo, so confirm - removal is now a single keypress (Del) away.
+        what = {"task": "task", "asw": "ASW task", "model": "codegen task",
+                "resource": "resource"}[kind]
+        if QMessageBox.question(
+                self, "Remove", f"Remove {what} '{name}'?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes) != QMessageBox.Yes:
+            return
         if kind in ("task", "asw"):
             self.project.remove_task(name)
         elif kind == "model":
             self.project.remove_model(name)
-        elif kind == "resource":
-            self.project.remove_resource(name)
         else:
-            QMessageBox.information(
-                self, "Remove", "Select a task, codegen task or resource.")
-            return
+            self.project.remove_resource(name)
+        self._log(f"removed {what} {name}")
         self._sel = ("system",)
         self.refresh()
 
