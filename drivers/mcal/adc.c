@@ -51,7 +51,7 @@ uint16_t Adc_ReadChannel(uint8_t channel)
 
 /** Internal-channel read: switch MUX/reference, let the reference
  *  settle, discard the first (inaccurate) conversion, convert, then
- *  restore AVcc/channel 0. */
+ *  restore the configured reference / channel 0. */
 static uint16_t Adc_ReadChannelInternal(uint8_t admux)
 {
     uint16_t raw;
@@ -60,7 +60,7 @@ static uint16_t Adc_ReadChannelInternal(uint8_t admux)
     (void)ADC_Convert(); /* settle + discard (datasheet 24.5.2) */
     raw = ADC_Convert();
 
-    ADMUX = ADC_REF_AVCC;
+    ADMUX = ADC_REF;
     return raw;
 }
 

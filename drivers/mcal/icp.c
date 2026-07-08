@@ -18,6 +18,8 @@
 static volatile uint16_t icpPeriod;
 static volatile uint16_t icpPulse;
 static volatile uint16_t icpLastRise;
+static volatile uint8_t  icpHaveRise; /* a rising edge has been captured
+                                         since init / signal loss       */
 static volatile uint8_t  icpFresh;
 static volatile uint8_t  icpOvfCount;
 
@@ -34,6 +36,7 @@ void Icp_Init(void)
     TIMSK1 = (uint8_t)((1u << ICIE1) | (1u << TOIE1));
 
     icpFresh    = 0u;
+    icpHaveRise = 0u;
     icpOvfCount = 2u; /* "no signal" until the first full cycle */
 }
 
@@ -43,10 +46,17 @@ ISR(TIMER1_CAPT_vect) /* Category 1: no OS service calls */
 
     if ((TCCR1B & (uint8_t)(1u << ICES1)) != 0u)
     {
-        /* Rising edge: close the previous cycle, open a new one. */
-        icpPeriod   = stamp - icpLastRise;
+        /* Rising edge: close the previous cycle, open a new one. The
+         * first rise after init or signal loss has no previous rise to
+         * measure against (icpLastRise is stale), so it only anchors
+         * the next cycle - no period is reported for it. */
+        if (icpHaveRise != 0u)
+        {
+            icpPeriod = stamp - icpLastRise;
+            icpFresh |= ICP_FRESH_PERIOD;
+        }
+        icpHaveRise = 1u;
         icpLastRise = stamp;
-        icpFresh   |= ICP_FRESH_PERIOD;
         icpOvfCount = 0u;
         TCCR1B &= (uint8_t)~(1u << ICES1); /* next: falling            */
     }
@@ -71,7 +81,8 @@ ISR(TIMER1_OVF_vect) /* Category 1: no OS service calls */
     }
     else
     {
-        icpFresh = 0u;
+        icpFresh    = 0u;
+        icpHaveRise = 0u; /* next rise re-anchors, no stale period */
     }
 }
 

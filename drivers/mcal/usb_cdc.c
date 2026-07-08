@@ -306,6 +306,8 @@ static void CdcService(void)
     EpSelect(CDC_TX_EP);
     if ((UEINTX & (uint8_t)(1u << RWAL)) != 0u)
     {
+        uint8_t wrote = 0u;
+
         while (txTail != txHead)
         {
             if ((UEINTX & (uint8_t)(1u << RWAL)) == 0u)
@@ -314,9 +316,15 @@ static void CdcService(void)
             }
             UEDATX = txBuf[txTail];
             txTail = (uint8_t)((txTail + 1u) & TX_MASK);
+            wrote  = 1u;
         }
-        /* Release the bank (send). FIFOCON=0, NAKINI cleared. */
-        UEINTX = (uint8_t)~((1u << FIFOCON) | (1u << TXINI));
+        if (wrote != 0u)
+        {
+            /* Release the bank (send). FIFOCON=0, NAKINI cleared. Releasing
+             * an untouched bank would queue a pointless zero-length packet
+             * every SOF (1 ms) while the console idles. */
+            UEINTX = (uint8_t)~((1u << FIFOCON) | (1u << TXINI));
+        }
     }
 
     /* RX: drain the OUT endpoint bank into the ring. */

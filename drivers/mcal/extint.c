@@ -78,12 +78,18 @@ ISR(INT1_vect) /* Category 1: no OS service calls */
 /** PCMSK0..2 are consecutive only in the register map, not in avr-libc
  *  headers - use an explicit lookup. Banks 1/2 (PORTC/PORTD pin-change) exist
  *  on the 328P/2560 but NOT the 32U4, whose only pin-change bank is PORTB
- *  (PCINT0..7); those branches compile out there, so only bank 0 is valid. */
+ *  (PCINT0..7); those branches compile out there. NULL = no such bank on
+ *  this part (or bank > 2): the callers turn that into a no-op instead of
+ *  silently aliasing bank 0. */
 static volatile uint8_t *PcMsk(uint8_t bank)
 {
-    volatile uint8_t *reg = &PCMSK0;
+    volatile uint8_t *reg = (volatile uint8_t *)0;
 
-    if (bank == 1u)
+    if (bank == 0u)
+    {
+        reg = &PCMSK0;
+    }
+    else if (bank == 1u)
     {
 #if defined(PCMSK1)
         reg = &PCMSK1;
@@ -97,45 +103,61 @@ static volatile uint8_t *PcMsk(uint8_t bank)
     }
     else
     {
-        /* bank 0 */
+        /* invalid bank */
     }
     return reg;
 }
 
 void PcInt_Enable(uint8_t bank, uint8_t mask)
 {
-    const uint8_t bit = (uint8_t)(1u << (bank & 0x03u));
+    volatile uint8_t *const pcmsk = PcMsk(bank);
 
-    ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+    if (pcmsk != (volatile uint8_t *)0)
     {
-        *PcMsk(bank) |= mask;
-        PCIFR  = bit; /* discard a stale pending change */
-        PCICR |= bit;
+        const uint8_t bit = (uint8_t)(1u << bank);
+
+        ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+        {
+            *pcmsk |= mask;
+            PCIFR  = bit; /* discard a stale pending change */
+            PCICR |= bit;
+        }
     }
 }
 
 void PcInt_Disable(uint8_t bank, uint8_t mask)
 {
-    ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+    volatile uint8_t *const pcmsk = PcMsk(bank);
+
+    if (pcmsk != (volatile uint8_t *)0)
     {
-        *PcMsk(bank) &= (uint8_t)~mask;
-        if (*PcMsk(bank) == 0u)
+        ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
         {
-            PCICR &= (uint8_t)~(1u << (bank & 0x03u));
+            *pcmsk &= (uint8_t)~mask;
+            if (*pcmsk == 0u)
+            {
+                PCICR &= (uint8_t)~(1u << bank);
+            }
         }
     }
 }
 
 uint8_t PcInt_FetchCount(uint8_t bank, uint8_t *level)
 {
-    const uint8_t idx = bank % 3u;
-    uint8_t count;
+    uint8_t count = 0u;
 
-    ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+    if (bank < 3u)
     {
-        count = pcIntCount[idx];
-        pcIntCount[idx] = 0u;
-        *level = pcIntLevel[idx];
+        ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+        {
+            count = pcIntCount[bank];
+            pcIntCount[bank] = 0u;
+            *level = pcIntLevel[bank];
+        }
+    }
+    else
+    {
+        *level = 0u; /* invalid bank: deterministic out-value */
     }
     return count;
 }

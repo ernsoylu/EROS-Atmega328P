@@ -9,11 +9,12 @@
  *
  * This firmware runs the RTE loop (Rte_Run_appKnbSwt: read A0 port ->
  * appKnbSwt_Runnable() -> write PB5 port) across that sweep and self-checks
- * the model's behaviour: the model
- * turns the LED ON when the knob is below ~25 % (raw <= 255) and OFF at or
- * above it, with no hysteresis window in this version - so a full sweep
- * must produce exactly one ON edge (descending through ~256) and exactly
- * one OFF edge (ascending through ~256), and must cover both rails.
+ * the model's behaviour: the model turns the LED ON when the knob drops
+ * below Knb_Thresh_Pc_Pt (20 % -> raw ~205) and OFF again only when it
+ * rises past Knb_Thresh_Pc_Pt + Knb_Hyst_Pc_Pt (25 % -> raw ~256) - a
+ * 5 %-point hysteresis window. A full sweep must therefore produce exactly
+ * one ON edge (descending through ~205) and exactly one OFF edge
+ * (ascending through ~256), and must cover both rails.
  *
  * The knob values are read as real ADC counts on-chip, so the checks are
  * independent of simavr's exact reference voltage.
@@ -95,9 +96,10 @@ int main(void)
     TK_ASSERT(on_edges  == 1u, "one-on-edge");
     TK_ASSERT(off_edges == 1u, "one-off-edge");
 
-    /* Both edges land at the model's ~25 % threshold (raw 256). */
-    TK_ASSERT(on_edge  >= 230u && on_edge  <= 280u, "on-threshold");
-    TK_ASSERT(off_edge >= 230u && off_edge <= 280u, "off-threshold");
+    /* ON at the 20 % threshold (raw ~205), OFF at 20 % + 5 % hysteresis
+     * (raw ~256): the edges must land in disjoint windows around each. */
+    TK_ASSERT(on_edge  >= 180u && on_edge  <= 230u, "on-threshold");
+    TK_ASSERT(off_edge >= 231u && off_edge <= 281u, "off-threshold");
 
     tk_pass();
 }

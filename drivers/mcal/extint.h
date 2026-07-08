@@ -49,15 +49,17 @@ void ExtInt_Disable(uint8_t which);
 uint8_t ExtInt_FetchCount(uint8_t which);
 
 /** Enable pin-change interrupts for `mask` pins of bank 0/1/2
- *  (PCMSKn bit positions = PCINT number modulo 8). */
+ *  (PCMSKn bit positions = PCINT number modulo 8). A bank that does
+ *  not exist (bank > 2, or banks 1/2 on the ATmega32U4) is a no-op. */
 void PcInt_Enable(uint8_t bank, uint8_t mask);
 
-/** Disable the given pins; the bank is switched off when empty. */
+/** Disable the given pins; the bank is switched off when empty.
+ *  Nonexistent banks are a no-op (see PcInt_Enable). */
 void PcInt_Disable(uint8_t bank, uint8_t mask);
 
 /** Atomically fetch and clear the bank's event count (saturates at
  *  255); *level receives the port input snapshot (PINx) taken at the
- *  most recent event. */
+ *  most recent event. An invalid bank (> 2) yields count 0, level 0. */
 uint8_t PcInt_FetchCount(uint8_t bank, uint8_t *level);
 
 #endif /* EXTINT_H */
